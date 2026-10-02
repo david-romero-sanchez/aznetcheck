@@ -1,77 +1,158 @@
 # AzNetCheck
 
-AzNetCheck is a .NET 10 command-line diagnostic tool for investigating connectivity to Microsoft Azure endpoints. It examines DNS, address classification, TCP, TLS certificate validation and HTTP independently, then explains what the observations do and do not establish. An HTTP 401 or 403 is an application-layer response, not a TCP failure.
+AzNetCheck is a .NET 10 command-line tool for diagnosing connectivity from the current machine to Microsoft Azure endpoints. It evaluates DNS, IP addresses, TCP, TLS, certificate validation, and HTTP as separate layers, then turns the observations into findings and suggested checks.
 
-The initial release is local and read-only. It does not sign in to Azure, change resources, modify network configuration or send telemetry.
+The central diagnostic rule is that connectivity, authentication, and authorization are different outcomes. An HTTP `401` or `403` means an HTTP endpoint responded; neither status by itself means that TCP connectivity failed.
+
+AzNetCheck is a local, read-only diagnostic tool. It does not modify Azure resources or local network configuration, does not scan address ranges, does not send credentials, and does not send telemetry. Authentication with Azure is not implemented in this version.
+
+## Requirements
+
+- .NET 10 SDK to build and run from source.
+- Windows is the primary target. The implementation uses cross-platform .NET networking APIs and the CI workflow builds and tests on Windows and Linux.
 
 ## Build and test
 
 ```powershell
-dotnet build AzNetCheck.sln
-dotnet test AzNetCheck.sln
+dotnet build AzNetCheck.sln --configuration Release
+dotnet test AzNetCheck.sln --configuration Release
 ```
 
-The integration test project is separate. Its public DNS check runs only when `AZNETCHECK_RUN_INTEGRATION=1` is set.
+The integration-test project is included in `dotnet test`, but its public DNS test is opt-in. It runs only when `AZNETCHECK_RUN_INTEGRATION=1`; ordinary unit and CLI tests do not require Internet access.
 
-## Usage
+The production solution is organized into four projects:
 
-Al ejecutar `aznetcheck` sin parámetros se muestra un resumen de capacidades, comandos, opciones y ejemplos. `aznetcheck --help` muestra la ayuda breve generada para el árbol de comandos.
+- `src/AzNetCheck.Cli`: System.CommandLine command parsing, dependency composition, Spectre.Console rendering, JSON output, and exit codes.
+- `src/AzNetCheck.Core`: diagnostic models, interfaces, orchestration, findings, and summaries.
+- `src/AzNetCheck.Networking`: DNS, TCP, TLS/certificate, and HTTP implementations.
+- `src/AzNetCheck.Azure`: embedded Azure service catalog and service detection.
 
-```text
-aznetcheck check <target> [--service <id>] [--port <port>] [--timeout <seconds>] [--ipv4 | --ipv6] [--json] [--verbose]
-aznetcheck detect <target> [--service <id>] [--json]
-aznetcheck dns <target> [--timeout <seconds>] [--ipv4 | --ipv6] [--json]
-aznetcheck tcp <target> [--port <port>] [--timeout <seconds>] [--ipv4 | --ipv6] [--json]
-aznetcheck tls <target> [--port <port>] [--timeout <seconds>] [--ipv4 | --ipv6] [--json]
-aznetcheck http <url> [--timeout <seconds>] [--json]
-aznetcheck catalog [list]
-aznetcheck catalog show <service>
-aznetcheck version
-```
+Tests are under `tests/`, including CLI process tests in `AzNetCheck.Cli.Tests`.
 
-Examples:
+## Getting started
+
+Running `aznetcheck` with no arguments displays an overview of the capabilities, commands, options, and examples. `aznetcheck --help` displays the concise command-tree help.
+
+To run from the repository with the .NET SDK:
 
 ```powershell
 dotnet run --project src/AzNetCheck.Cli -- check contoso.vault.azure.net
-dotnet run --project src/AzNetCheck.Cli -- check https://contoso.vault.azure.net --json
-dotnet run --project src/AzNetCheck.Cli -- check internal-vault.corp --service keyvault --port 443
-dotnet run --project src/AzNetCheck.Cli -- tcp myserver.database.windows.net --port 1433
-dotnet run --project src/AzNetCheck.Cli -- check contoso.vault.azure.net --ipv4 --verbose
-dotnet run --project src/AzNetCheck.Cli -- catalog
 ```
 
-Targets can be hostnames, `hostname:port`, HTTP(S) URLs, IPv4 or bracketed IPv6 with a port. `--timeout` applies the same per-stage timeout in seconds (maximum 300). `--no-color` is accepted; the initial renderer is plain text and never depends on color. JSON mode emits only the versioned report on standard output. Diagnostics exit with `0` when completed without blocking failures (warnings included), `1` for a connectivity failure, `2` for invalid input, `3` for cancellation/inconclusive completion, and `4` for an unexpected internal error.
+## Commands
 
-`--ipv4` and `--ipv6` restrict address attempts to the selected family; they cannot be combined. If DNS succeeds but yields no address in that family, the report is inconclusive and dependent tests are skipped. TLS connects to a resolved address that passed TCP while retaining the original hostname for SNI and certificate validation.
+```text
+aznetcheck check <target> [--service <id>] [--port <port>] [--timeout <seconds>] [--ipv4 | --ipv6] [--json] [--verbose] [--no-color] [--debug]
+aznetcheck detect <target> [--service <id>] [--json] [--no-color] [--debug]
+aznetcheck dns <target> [--timeout <seconds>] [--ipv4 | --ipv6] [--json] [--no-color] [--debug]
+aznetcheck tcp <target> [--service <id>] [--port <port>] [--timeout <seconds>] [--ipv4 | --ipv6] [--json] [--no-color] [--debug]
+aznetcheck tls <target> [--port <port>] [--timeout <seconds>] [--ipv4 | --ipv6] [--json] [--no-color] [--debug]
+aznetcheck http <url> [--port <port>] [--timeout <seconds>] [--json] [--no-color] [--debug]
+aznetcheck catalog [list] [--json] [--no-color] [--debug]
+aznetcheck catalog show <service> [--json] [--no-color] [--debug]
+aznetcheck version
+```
 
-The CLI uses System.CommandLine for typed commands/options and Spectre.Console for human-readable tables and status styling. `--no-color` disables ANSI styling; `--json` bypasses the human renderer and writes only JSON to stdout. Ctrl+C is propagated through the command invocation cancellation token.
+`aznetcheck catalog` and `aznetcheck catalog list` both list the embedded profiles. Use `catalog show` to inspect a profile's transports and authentication scope.
 
-## Reading results
+### Options
 
-- HTTP `401` means the HTTPS endpoint responded; connectivity is reported as passed and authentication as a warning. No RBAC conclusion is inferred.
-- HTTP `403` means the endpoint responded but denied the request. Authorization and service network restrictions remain possible causes; the status alone does not identify one.
-- TCP `Connection refused` means the target host actively rejected the selected port. This is reported separately from timeout, with a suggestion to verify the listener and port.
-- A Private Link CNAME or private address is reported as an indicator. If TCP then fails, the report suggests checking DNS links, forwarding, routing, VPN/ExpressRoute and firewalls without claiming which is misconfigured.
-- With multiple resolved addresses, each TCP attempt is retained. A mix of success and failure is reported as partial connectivity, not as total failure.
+- `--service <id>` forces a known service profile for a custom hostname or DNS alias. Supported by `check`, `detect`, and `tcp`.
+- `--port <port>` overrides the effective port. The value must be from 1 to 65535.
+- `--timeout <seconds>` sets the same per-stage timeout for the command. The value must be greater than 0 and no more than 300 seconds. `check` applies it to DNS, TCP, TLS, and HTTP stages.
+- `--ipv4` or `--ipv6` limits address selection to one family. Do not specify both. If no address in that family is available, the diagnostic is inconclusive and dependent tests are skipped.
+- `--json` writes machine-readable JSON to standard output without the human-readable renderer. The diagnostic report uses schema version `1.0`.
+- `--verbose` adds diagnostic evidence to the `check` display.
+- `--no-color` disables ANSI styling in human-readable output.
+- `--debug` includes the exception type for unexpected internal errors. It does not print secrets or credentials.
+- `--help` displays help for the root command or an individual command.
 
-## Supported services
+## Examples
 
-The embedded JSON catalog recognizes Azure Key Vault, Blob/File/Queue/Table Storage, Data Lake Storage, Azure SQL Database, Service Bus, Event Hubs, Container Registry and App Service. Service Bus and Event Hubs share a DNS suffix, so hostname-only detection may correctly report ambiguity. Unknown hostnames continue with generic diagnostics. `--service` forces a profile for custom DNS aliases.
+```powershell
+aznetcheck check contoso.vault.azure.net
+aznetcheck check https://contoso.vault.azure.net --json
+aznetcheck check internal-vault.corp --service keyvault --port 443
+aznetcheck check contoso.vault.azure.net --ipv4 --verbose
+aznetcheck dns contoso.vault.azure.net
+aznetcheck tcp myserver.database.windows.net --port 1433
+aznetcheck tls contoso.vault.azure.net --port 443
+aznetcheck http https://example.com
+aznetcheck catalog
+aznetcheck catalog show keyvault
+```
 
-The automatic check tests HTTPS/TCP transports. Azure Files SMB and AMQP ports are represented in the catalog but are not automatically probed; choose an explicit port with `tcp` when needed. Authentication and service-specific authorization probes are not implemented in this first increment.
+Targets may be hostnames, `hostname:port`, HTTP/HTTPS URLs, IPv4 addresses, or IPv6 addresses. IPv6 literals with a port use brackets, for example `[2001:db8::1]:443`.
+
+## Diagnostic behavior
+
+The `check` pipeline identifies the Azure service when the hostname matches the embedded catalog, resolves DNS A/AAAA records and CNAMEs, classifies resolved addresses, detects Private Link indicators, tests TCP, validates TLS/certificates when applicable, and makes a non-destructive HTTP GET when the service uses HTTP.
+
+Dependent tests are marked `Skipped` when a prerequisite fails. If several addresses resolve, TCP attempts are retained per address. A mixture of successful and failed attempts is reported as partial connectivity rather than as total failure. TLS connects to an address that passed TCP while retaining the original hostname for SNI and certificate validation.
+
+The summary and findings distinguish evidence from interpretation and recommendations. For example:
+
+- HTTP `401 Unauthorized`: the HTTPS endpoint responded; network connectivity is successful and authentication is reported as a warning. The result does not establish an RBAC problem.
+- HTTP `403 Forbidden`: the endpoint responded but denied the request. Authorization settings and service network restrictions are possible causes; the status alone does not identify the cause.
+- TCP `Connection refused`: the host actively rejected the selected port. This is reported separately from a timeout.
+- Private Link CNAME or private IP followed by TCP failure: the report suggests investigating DNS links/forwarding, routing, VPN/ExpressRoute, and firewalls without claiming which component is misconfigured.
+
+## Azure service catalog
+
+The embedded JSON catalog includes:
+
+- Azure Key Vault.
+- Azure Blob, File, Queue, and Table Storage.
+- Azure Data Lake Storage.
+- Azure SQL Database.
+- Azure Service Bus and Azure Event Hubs.
+- Azure Container Registry.
+- Azure App Service.
+
+Service Bus and Event Hubs share a DNS suffix, so hostname-only detection may return `Ambiguous`. Use `--service` to choose a profile when diagnosing a custom alias. Unknown hostnames remain `Unknown` and can still use generic diagnostics.
+
+The catalog represents multiple transports, including HTTPS/TCP 443, SQL/TCP 1433, SMB/TCP 445, and AMQP/TCP 5671 or 443. The automatic check probes the required transport; optional SMB and AMQP transports are catalog information and are not automatically tested. Use the `tcp` command with an explicit port to test a specific port.
+
+## Output and exit codes
+
+Human-readable output uses Spectre.Console tables and status labels. The status text remains meaningful when color is disabled. JSON mode bypasses that renderer and writes only the structured result to standard output.
+
+Exit codes:
+
+- `0`: diagnostics completed without a blocking failure; warnings do not automatically fail the command.
+- `1`: one or more connectivity checks failed.
+- `2`: invalid command, argument, option, or value.
+- `3`: diagnostics were cancelled or inconclusive.
+- `4`: unexpected internal error.
+
+Ctrl+C is propagated through the System.CommandLine invocation cancellation token to asynchronous diagnostic operations.
 
 ## Security and limitations
 
-AzNetCheck does not invoke shell commands, scan address ranges, send credentials, print HTTP request secrets or disable certificate validation. HTTP uses a non-destructive GET and the platform-configured `HttpClient` proxy; direct TCP/TLS checks do not use that proxy, so their outcomes can differ. HTTP redirects are reported rather than followed. The `--debug` option is reserved for internal details and should never be used to expose credentials; diagnostic requests currently send no credentials.
+- Network requests are diagnostic and non-destructive. HTTP uses GET; redirects are reported and are not followed.
+- HTTP uses the platform-configured `HttpClient` proxy. TCP and TLS tests connect directly, so the results may differ when a proxy is present.
+- Certificate validation uses the platform's normal trust and hostname validation. Certificate validation is not disabled by default.
+- AzNetCheck does not print Authorization headers, cookies, tokens, client secrets, or HTTP query strings in diagnostic reports.
+- This release does not implement Azure Identity authentication, interactive login, service-specific authorization probes, custom catalog loading, explicit proxy diagnostics, Windows WinHTTP inspection, or Azure Resource Manager configuration inspection.
+- Optional Azure Files SMB and Service Bus/Event Hubs AMQP transports are not part of the automatic `check` sequence.
 
-The initial version uses standard system trust and hostname validation. It does not yet support custom catalog files, Azure Identity, interactive authentication, Windows WinHTTP inspection or Azure Resource Manager configuration inspection.
+## Publishing for Windows
 
-## Publishing
-
-Publish the self-contained single-file Windows executable without trimming:
+Publish a self-contained, single-file `win-x64` executable:
 
 ```powershell
-dotnet publish src/AzNetCheck.Cli/AzNetCheck.Cli.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false
+dotnet publish src/AzNetCheck.Cli/AzNetCheck.Cli.csproj `
+  --configuration Release `
+  --runtime win-x64 `
+  --self-contained true `
+  -p:PublishSingleFile=true `
+  -p:PublishTrimmed=false
 ```
 
-The executable is `aznetcheck.exe` under `src/AzNetCheck.Cli/bin/Release/net10.0/win-x64/publish/`. The `win-x64` publish profile is also available through `-p:PublishProfile=win-x64`.# aznetcheck
+The output includes `aznetcheck.exe` under `src/AzNetCheck.Cli/bin/Release/net10.0/win-x64/publish/`. A publish profile is also available:
+
+```powershell
+dotnet publish src/AzNetCheck.Cli/AzNetCheck.Cli.csproj -p:PublishProfile=win-x64
+```
+
+Trimming is intentionally disabled (`PublishTrimmed=false`). The application uses JSON serialization and console libraries, and the current release prioritizes reliable single-file publishing over a smaller executable. Do not enable trimming for production artifacts until the trimmed publish and all CLI/catalog/JSON flows have dedicated validation. The project is prepared for future runtime identifiers, but only `win-x64` is currently configured and verified for single-file publishing.
