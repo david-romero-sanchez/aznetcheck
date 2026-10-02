@@ -41,6 +41,8 @@ Targets can be hostnames, `hostname:port`, HTTP(S) URLs, IPv4 or bracketed IPv6 
 
 `--ipv4` and `--ipv6` restrict address attempts to the selected family; they cannot be combined. If DNS succeeds but yields no address in that family, the report is inconclusive and dependent tests are skipped. TLS connects to a resolved address that passed TCP while retaining the original hostname for SNI and certificate validation.
 
+The CLI uses System.CommandLine for typed commands/options and Spectre.Console for human-readable tables and status styling. `--no-color` disables ANSI styling; `--json` bypasses the human renderer and writes only JSON to stdout. Ctrl+C is propagated through the command invocation cancellation token.
+
 ## Reading results
 
 - HTTP `401` means the HTTPS endpoint responded; connectivity is reported as passed and authentication as a warning. No RBAC conclusion is inferred.

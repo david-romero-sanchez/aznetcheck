@@ -6,6 +6,10 @@
     <Version>0.1.0</Version>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="System.CommandLine" Version="2.0.12" />
+    <PackageReference Include="Spectre.Console" Version="0.57.2" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\AzNetCheck.Core\AzNetCheck.Core.csproj" />
     <ProjectReference Include="..\AzNetCheck.Networking\AzNetCheck.Networking.csproj" />
     <ProjectReference Include="..\AzNetCheck.Azure\AzNetCheck.Azure.csproj" />

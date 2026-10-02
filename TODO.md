@@ -44,8 +44,8 @@ Este documento recoge trabajo pendiente respecto al alcance del producto. No inc
 - [ ] Añadir detección y selección de proxy: variables `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` y proxy configurado por .NET.
 - [ ] Diseñar `IProxyDiagnostic` y presentar por separado conexión TCP directa y HTTP a través del proxy configurado.
 - [x] Añadir opciones funcionales `--ipv4` y `--ipv6`, incluyendo filtrado determinista de direcciones y pruebas.
-- [ ] Añadir visualización de consola con Spectre.Console y respetar `--no-color` sin depender únicamente del color para expresar estados.
-- [ ] Añadir parsing formal con System.CommandLine y validar help, argumentos, opciones y mensajes de uso mediante tests.
+- [x] Añadir visualización de consola con Spectre.Console y respetar `--no-color` sin depender únicamente del color para expresar estados.
+- [x] Añadir parsing formal con System.CommandLine y validar help, argumentos, opciones y mensajes de uso mediante tests CLI de proceso.
 - [ ] Añadir composición de dependencias explícita y centralizada; si se adopta Microsoft.Extensions.DependencyInjection, mantener CLI como único composition root.
 - [ ] Añadir logging con Microsoft.Extensions.Logging, enviando logs a stderr y manteniendo stdout limpio para JSON.
 - [x] Añadir soporte real para `--verbose` (versión TLS, suite, subject/issuer/SAN/vigencia, CNAME, direcciones y errores de socket seguros).
