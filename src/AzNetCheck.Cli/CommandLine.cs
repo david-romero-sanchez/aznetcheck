@@ -22,9 +22,14 @@ internal static partial class Program
 
     private static async Task<int> RunCommandLineAsync(string[] args)
     {
+        if (args.Length == 0)
+        {
+            RenderOverview();
+            return 0;
+        }
+
         var root = BuildRootCommand();
-        var parseArguments = args.Length == 0 ? ["--help"] : args;
-        var parseResult = root.Parse(parseArguments);
+        var parseResult = root.Parse(args);
         if (parseResult.Errors.Count > 0)
         {
             var errorConsole = CreateConsole(args.Contains("--no-color", StringComparer.Ordinal), Console.Error);
@@ -39,6 +44,62 @@ internal static partial class Program
             ProcessTerminationTimeout = TimeSpan.FromSeconds(2)
         };
         return await parseResult.InvokeAsync(invocationConfiguration).ConfigureAwait(false);
+    }
+
+    private static void RenderOverview()
+    {
+        var console = CreateConsole(noColor: false);
+        console.MarkupLine("[bold deepskyblue1]AzNetCheck[/] [grey]0.1.0[/]");
+        console.MarkupLine("Diagnoses connectivity from this machine to Microsoft Azure services.");
+        console.MarkupLine("Interprets each layer independently: HTTP 401/403 confirms the endpoint was reached; it is not a TCP failure.");
+
+        var capabilities = new Table().Border(TableBorder.Rounded).Title("What it checks");
+        capabilities.AddColumn("Capability");
+        capabilities.AddColumn("Details");
+        capabilities.AddRow("Azure service detection", "Recognizes known profiles; use --service for custom DNS aliases.");
+        capabilities.AddRow("DNS and Private Link", "Queries A/AAAA, preserves CNAME chains, and reports Private Link indicators.");
+        capabilities.AddRow("Network", "Classifies IP addresses and records TCP attempts per address, including partial connectivity.");
+        capabilities.AddRow("TLS and certificates", "Validates the handshake, hostname, and chain; reports protocol and certificate details.");
+        capabilities.AddRow("HTTP", "Sends a non-destructive GET and interprets 401, 403, and other statuses separately from network connectivity.");
+        capabilities.AddRow("Results", "Provides findings, recommendations, versioned JSON, and exit codes.");
+        console.Write(capabilities);
+
+        var commands = new Table().Border(TableBorder.Rounded).Title("Commands");
+        commands.AddColumn("Command");
+        commands.AddColumn("Purpose");
+        commands.AddRow("check <target>", "Runs the complete layered diagnostic.");
+        commands.AddRow("detect <target>", "Detects an Azure profile or reports Unknown/Ambiguous.");
+        commands.AddRow("dns <target>", "Resolves A/AAAA records and displays the CNAME chain.");
+        commands.AddRow("tcp <target>", "Tests TCP connectivity; supports --port and --service.");
+        commands.AddRow("tls <target>", "Tests TLS and validates the server certificate.");
+        commands.AddRow("http <url>", "Sends a safe GET request and displays the HTTP status.");
+        commands.AddRow("catalog", "Lists profiles; equivalent to catalog list.");
+        commands.AddRow("catalog show <service>", "Displays profile transports and authentication scope.");
+        commands.AddRow("version", "Displays the application version.");
+        console.Write(commands);
+
+        var options = new Table().Border(TableBorder.Rounded).Title("Options");
+        options.AddColumn("Option");
+        options.AddColumn("Available for");
+        options.AddColumn("Purpose");
+        options.AddRow("--json", "check, detect, dns, tcp, tls, http, catalog", "Writes JSON without tables or additional text.");
+        options.AddRow("--no-color", "Diagnostic commands and catalog", "Disables ANSI styling.");
+        options.AddRow("--debug", "Diagnostic commands and catalog", "Adds a safe exception type to internal error output.");
+        options.AddRow("--timeout <seconds>", "check, dns, tcp, tls, http", "Per-stage timeout; greater than 0 and at most 300 seconds.");
+        options.AddRow("--service <id>", "check, detect, tcp", "Forces a profile for a DNS alias.");
+        options.AddRow("--port <port>", "check, tcp, tls, http", "Overrides the port (1-65535).");
+        options.AddRow("--ipv4 / --ipv6", "check, dns, tcp, tls", "Restricts addresses to one family; do not combine.");
+        options.AddRow("--verbose", "check", "Includes detailed diagnostic evidence.");
+        options.AddRow("--help", "All commands", "Displays concise help and command options.");
+        console.Write(options);
+
+        console.MarkupLine("\n[bold]Examples[/]");
+        console.MarkupLine("  aznetcheck check contoso.vault.azure.net");
+        console.MarkupLine("  aznetcheck check https://contoso.vault.azure.net --json");
+        console.MarkupLine("  aznetcheck check internal-vault.corp --service keyvault --ipv4");
+        console.MarkupLine("  aznetcheck tcp myserver.database.windows.net --port 1433");
+        console.MarkupLine("  aznetcheck catalog show keyvault");
+        console.MarkupLine("\n[grey]Read-only diagnostics; Azure authentication is not started and resources are not modified.[/]");
     }
 
     private static RootCommand BuildRootCommand()
@@ -122,6 +183,9 @@ internal static partial class Program
         });
 
         var catalogCommand = new Command("catalog", "List or inspect embedded Azure service profiles.");
+        var catalogOutput = AddOutputOptions(catalogCommand);
+        catalogCommand.SetAction(parse => CatalogList(catalog, parse.GetValue(catalogOutput.Json),
+            parse.GetValue(catalogOutput.NoColor)));
         var list = new Command("list", "List all known service profiles.");
         var listOutput = AddOutputOptions(list);
         list.SetAction(parse => CatalogList(catalog, parse.GetValue(listOutput.Json),

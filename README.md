@@ -15,6 +15,8 @@ The integration test project is separate. Its public DNS check runs only when `A
 
 ## Usage
 
+Al ejecutar `aznetcheck` sin parámetros se muestra un resumen de capacidades, comandos, opciones y ejemplos. `aznetcheck --help` muestra la ayuda breve generada para el árbol de comandos.
+
 ```text
 aznetcheck check <target> [--service <id>] [--port <port>] [--timeout <seconds>] [--ipv4 | --ipv6] [--json] [--verbose]
 aznetcheck detect <target> [--service <id>] [--json]
@@ -22,7 +24,7 @@ aznetcheck dns <target> [--timeout <seconds>] [--ipv4 | --ipv6] [--json]
 aznetcheck tcp <target> [--port <port>] [--timeout <seconds>] [--ipv4 | --ipv6] [--json]
 aznetcheck tls <target> [--port <port>] [--timeout <seconds>] [--ipv4 | --ipv6] [--json]
 aznetcheck http <url> [--timeout <seconds>] [--json]
-aznetcheck catalog list
+aznetcheck catalog [list]
 aznetcheck catalog show <service>
 aznetcheck version
 ```
@@ -35,6 +37,7 @@ dotnet run --project src/AzNetCheck.Cli -- check https://contoso.vault.azure.net
 dotnet run --project src/AzNetCheck.Cli -- check internal-vault.corp --service keyvault --port 443
 dotnet run --project src/AzNetCheck.Cli -- tcp myserver.database.windows.net --port 1433
 dotnet run --project src/AzNetCheck.Cli -- check contoso.vault.azure.net --ipv4 --verbose
+dotnet run --project src/AzNetCheck.Cli -- catalog
 ```
 
 Targets can be hostnames, `hostname:port`, HTTP(S) URLs, IPv4 or bracketed IPv6 with a port. `--timeout` applies the same per-stage timeout in seconds (maximum 300). `--no-color` is accepted; the initial renderer is plain text and never depends on color. JSON mode emits only the versioned report on standard output. Diagnostics exit with `0` when completed without blocking failures (warnings included), `1` for a connectivity failure, `2` for invalid input, `3` for cancellation/inconclusive completion, and `4` for an unexpected internal error.

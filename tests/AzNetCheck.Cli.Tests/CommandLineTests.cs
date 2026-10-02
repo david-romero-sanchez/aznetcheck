@@ -17,6 +17,21 @@ public sealed class CommandLineTests
     }
 
     [Fact]
+    public async Task No_arguments_show_feature_overview_commands_options_and_examples()
+    {
+        var result = await RunAsync();
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("What it checks", result.StandardOutput);
+        Assert.Contains("DNS and Private Link", result.StandardOutput);
+        Assert.Contains("check <target>", result.StandardOutput);
+        Assert.Contains("catalog show <service>", result.StandardOutput);
+        Assert.Contains("--json", result.StandardOutput);
+        Assert.Contains("--ipv4 / --ipv6", result.StandardOutput);
+        Assert.Contains("aznetcheck check contoso.vault.azure.net", result.StandardOutput);
+    }
+
+    [Fact]
     public async Task Invalid_timeout_is_a_usage_error()
     {
         var result = await RunAsync("check", "example.com", "--timeout", "invalid", "--no-color");
@@ -35,6 +50,27 @@ public sealed class CommandLineTests
         Assert.Equal(0, result.ExitCode);
         Assert.Contains("Azure Key Vault", result.StandardOutput);
         Assert.DoesNotContain("\u001b[", result.StandardOutput);
+    }
+
+    [Fact]
+    public async Task Catalog_without_subcommand_lists_services()
+    {
+        var result = await RunAsync("catalog");
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("azure-key-vault", result.StandardOutput);
+        Assert.Contains("Azure Key Vault", result.StandardOutput);
+    }
+
+    [Fact]
+    public async Task Catalog_without_subcommand_supports_json()
+    {
+        var result = await RunAsync("catalog", "--json");
+
+        Assert.Equal(0, result.ExitCode);
+        using var document = JsonDocument.Parse(result.StandardOutput);
+        Assert.Contains(document.RootElement.EnumerateArray(), service =>
+            service.GetProperty("id").GetString() == "azure-key-vault");
     }
 
     [Fact]
