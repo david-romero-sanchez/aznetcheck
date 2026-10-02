@@ -22,4 +22,14 @@ public sealed class ServiceCatalogTests
             transport => transport.Port == 445 && !transport.Required);
         Assert.Equal(3, catalog.Services.Single(service => service.Id == "azure-service-bus").Transports.Count);
     }
+
+    [Fact]
+    public void Shared_servicebus_suffix_is_reported_as_ambiguous()
+    {
+        var result = new AzureServiceCatalog().Detect("namespace.servicebus.windows.net");
+
+        Assert.Equal(ServiceDetectionStatus.Ambiguous, result.Status);
+        Assert.Contains(result.Candidates, service => service.Id == "azure-service-bus");
+        Assert.Contains(result.Candidates, service => service.Id == "azure-event-hubs");
+    }
 }

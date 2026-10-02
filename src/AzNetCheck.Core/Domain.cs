@@ -6,6 +6,7 @@ public enum DiagnosticStatus { Passed, Failed, Warning, Skipped, NotApplicable, 
 public enum FindingSeverity { Info, Warning, Error }
 public enum ServiceDetectionStatus { Detected, Unknown, Ambiguous }
 public enum IpAddressKind { Public, Private, IPv6, Loopback, LinkLocal, Unspecified }
+public enum DiagnosticAddressFamily { Any, IPv4, IPv6 }
 
 public sealed record DiagnosticTarget(
     string OriginalInput,
@@ -51,7 +52,7 @@ public static class DiagnosticTargetParser
 
             scheme = uri.Scheme.ToLowerInvariant();
             host = uri.Host;
-            port = uri.IsDefaultPort ? null : uri.Port;
+            port = TryGetExplicitPort(value, out var explicitPort) ? explicitPort : null;
             path = string.IsNullOrEmpty(uri.PathAndQuery) ? "/" : uri.PathAndQuery;
         }
         else if (value.StartsWith("[", StringComparison.Ordinal))
@@ -100,7 +101,11 @@ public static class DiagnosticTargetParser
         }
 
         IPAddress? address = IPAddress.TryParse(host, out var ipAddress) ? ipAddress : null;
-        if (address is null)
+        if (address is not null)
+        {
+            host = address.ToString();
+        }
+        else
         {
             try { host = new System.Globalization.IdnMapping().GetAscii(host.TrimEnd('.')).ToLowerInvariant(); }
             catch (ArgumentException)
@@ -116,6 +121,24 @@ public static class DiagnosticTargetParser
 
     private static bool TryPort(string text, out int port) =>
         int.TryParse(text, out port) && port is > 0 and <= 65535;
+
+    private static bool TryGetExplicitPort(string value, out int port)
+    {
+        port = 0;
+        var authorityStart = value.IndexOf("://", StringComparison.Ordinal) + 3;
+        var authorityEnd = value.IndexOfAny(['/','?','#'], authorityStart);
+        var authority = authorityEnd < 0 ? value[authorityStart..] : value[authorityStart..authorityEnd];
+        var userInfoEnd = authority.LastIndexOf('@');
+        if (userInfoEnd >= 0) authority = authority[(userInfoEnd + 1)..];
+        if (authority.StartsWith("[", StringComparison.Ordinal))
+        {
+            var closingBracket = authority.IndexOf(']');
+            return closingBracket >= 0 && closingBracket + 1 < authority.Length && authority[closingBracket + 1] == ':' &&
+                TryPort(authority[(closingBracket + 2)..], out port);
+        }
+        var colon = authority.LastIndexOf(':');
+        return colon > 0 && authority.IndexOf(':') == colon && TryPort(authority[(colon + 1)..], out port);
+    }
 }
 
 public sealed record ServiceTransport(string Name, string Protocol, int Port, bool Required, string Description, int? PortEnd = null);
@@ -162,7 +185,8 @@ public interface ITcpDiagnostic
 }
 public interface ITlsDiagnostic
 {
-    Task<TlsProbeResult> HandshakeAsync(string hostname, int port, TimeSpan timeout, CancellationToken cancellationToken);
+    Task<TlsProbeResult> HandshakeAsync(string hostname, IPAddress address, int port, TimeSpan timeout,
+        CancellationToken cancellationToken);
 }
 public interface IHttpDiagnostic
 {

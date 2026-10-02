@@ -10,9 +10,41 @@ using DnsClient.Protocol;
 
 namespace AzNetCheck.Networking;
 
-public sealed class DnsClientDiagnostic : IDnsDiagnostic
+public enum DnsRecordType { A, AAAA }
+
+public sealed record DnsQueryResult(string ResponseCode, IReadOnlyList<IPAddress> Addresses, string? CanonicalName = null);
+
+public interface IDnsQueryClient
+{
+    Task<DnsQueryResult> QueryAsync(string hostname, DnsRecordType recordType, CancellationToken cancellationToken);
+}
+
+public sealed class DnsClientQueryClient : IDnsQueryClient
 {
     private readonly LookupClient _lookup = new(new LookupClientOptions { UseCache = true, ThrowDnsErrors = false });
+
+    public async Task<DnsQueryResult> QueryAsync(string hostname, DnsRecordType recordType, CancellationToken cancellationToken)
+    {
+        var queryType = recordType == DnsRecordType.A ? QueryType.A : QueryType.AAAA;
+        var response = await _lookup.QueryAsync(hostname, queryType, QueryClass.IN, cancellationToken).ConfigureAwait(false);
+        var records = recordType == DnsRecordType.A
+            ? response.Answers.ARecords().Select(record => record.Address).ToArray()
+            : response.Answers.AaaaRecords().Select(record => record.Address).ToArray();
+        var cname = response.Answers.CnameRecords().FirstOrDefault()?.CanonicalName.Value.TrimEnd('.');
+        return new DnsQueryResult(response.Header.ResponseCode.ToString(), records, cname);
+    }
+}
+
+public sealed class DnsClientDiagnostic : IDnsDiagnostic
+{
+    private const int MaximumCnameDepth = 12;
+    private readonly IDnsQueryClient _queryClient;
+
+    public DnsClientDiagnostic() : this(new DnsClientQueryClient())
+    {
+    }
+
+    public DnsClientDiagnostic(IDnsQueryClient queryClient) => _queryClient = queryClient;
 
     public async Task<DnsResolutionResult> ResolveAsync(string hostname, TimeSpan timeout, CancellationToken cancellationToken)
     {
@@ -23,10 +55,11 @@ public sealed class DnsClientDiagnostic : IDnsDiagnostic
         var addresses = new HashSet<IPAddress>();
         var current = hostname.TrimEnd('.');
         var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        string? responseCode = null;
+        string? addressResponseCode = null;
+        string? address6ResponseCode = null;
         try
         {
-            for (var depth = 0; depth < 12; depth++)
+            for (var depth = 0; depth <= MaximumCnameDepth; depth++)
             {
                 if (!visited.Add(current))
                 {
@@ -34,22 +67,32 @@ public sealed class DnsClientDiagnostic : IDnsDiagnostic
                     return new(DiagnosticStatus.Failed, addresses.Select(address => address.ToString()).ToArray(), chain,
                         watch.Elapsed, "CnameLoop", "DNS CNAME loop detected.");
                 }
-                var responseA = await _lookup.QueryAsync(current, QueryType.A, QueryClass.IN, deadline.Token).ConfigureAwait(false);
-                var responseAaaa = await _lookup.QueryAsync(current, QueryType.AAAA, QueryClass.IN, deadline.Token).ConfigureAwait(false);
-                addresses.UnionWith(responseA.Answers.ARecords().Select(record => record.Address));
-                addresses.UnionWith(responseAaaa.Answers.AaaaRecords().Select(record => record.Address));
-                responseCode = responseA.Header.ResponseCode.ToString();
-                var cname = responseA.Answers.CnameRecords().Concat(responseAaaa.Answers.CnameRecords())
-                    .FirstOrDefault()?.CanonicalName.Value.TrimEnd('.');
+                var responseA = await _queryClient.QueryAsync(current, DnsRecordType.A, deadline.Token).ConfigureAwait(false);
+                var responseAaaa = await _queryClient.QueryAsync(current, DnsRecordType.AAAA, deadline.Token).ConfigureAwait(false);
+                addresses.UnionWith(responseA.Addresses);
+                addresses.UnionWith(responseAaaa.Addresses);
+                addressResponseCode = responseA.ResponseCode;
+                address6ResponseCode = responseAaaa.ResponseCode;
+                var cname = responseA.CanonicalName ?? responseAaaa.CanonicalName;
                 if (string.IsNullOrWhiteSpace(cname)) break;
+                if (chain.Count == MaximumCnameDepth)
+                {
+                    watch.Stop();
+                    return new(DiagnosticStatus.Inconclusive, addresses.Select(address => address.ToString()).ToArray(), chain,
+                        watch.Elapsed, "CnameDepthExceeded", $"DNS CNAME chain exceeded the maximum depth of {MaximumCnameDepth}.");
+                }
                 chain.Add(cname);
                 current = cname;
             }
             watch.Stop();
             return addresses.Count > 0
                 ? new(DiagnosticStatus.Passed, addresses.Select(address => address.ToString()).ToArray(), chain, watch.Elapsed)
-                : new(DiagnosticStatus.Failed, [], chain, watch.Elapsed, responseCode ?? "NoRecords",
-                    responseCode == "NxDomain" ? "DNS returned NXDOMAIN; the hostname does not exist." : "DNS returned no A or AAAA records.");
+                : new(DiagnosticStatus.Failed, [], chain, watch.Elapsed,
+                    addressResponseCode == "ServerFailure" || address6ResponseCode == "ServerFailure" ? "ServerFailure" :
+                    addressResponseCode == "NxDomain" || address6ResponseCode == "NxDomain" ? "NxDomain" : "NoRecords",
+                    addressResponseCode == "NxDomain" || address6ResponseCode == "NxDomain" ? "DNS returned NXDOMAIN; the hostname does not exist." :
+                    addressResponseCode == "ServerFailure" || address6ResponseCode == "ServerFailure" ? "The DNS server returned SERVFAIL." :
+                    "DNS returned no A or AAAA records.");
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -104,7 +147,8 @@ public sealed class TcpSocketDiagnostic : ITcpDiagnostic
 
 public sealed class TlsStreamDiagnostic : ITlsDiagnostic
 {
-    public async Task<TlsProbeResult> HandshakeAsync(string hostname, int port, TimeSpan timeout, CancellationToken cancellationToken)
+    public async Task<TlsProbeResult> HandshakeAsync(string hostname, IPAddress address, int port, TimeSpan timeout,
+        CancellationToken cancellationToken)
     {
         var watch = Stopwatch.StartNew();
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -113,8 +157,8 @@ public sealed class TlsStreamDiagnostic : ITlsDiagnostic
         SslPolicyErrors policyErrors = SslPolicyErrors.None;
         try
         {
-            using var client = new TcpClient();
-            await client.ConnectAsync(hostname, port, deadline.Token).ConfigureAwait(false);
+            using var client = new TcpClient(address.AddressFamily);
+            await client.ConnectAsync(address, port, deadline.Token).ConfigureAwait(false);
             await using var stream = new SslStream(client.GetStream(), leaveInnerStreamOpen: false, (_, cert, _, errors) =>
             {
                 policyErrors = errors;
@@ -165,12 +209,36 @@ public sealed class TlsStreamDiagnostic : ITlsDiagnostic
 
 public sealed class HttpClientDiagnostic : IHttpDiagnostic, IDisposable
 {
-    private readonly HttpClient _client = new(new HttpClientHandler { AllowAutoRedirect = false });
+    private readonly HttpClient _client;
+    private readonly bool _ownsClient;
+
+    public HttpClientDiagnostic()
+        : this(new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }), ownsClient: true)
+    {
+    }
+
+    public HttpClientDiagnostic(HttpClient client)
+        : this(client, ownsClient: false)
+    {
+    }
+
+    private HttpClientDiagnostic(HttpClient client, bool ownsClient)
+    {
+        _client = client;
+        _ownsClient = ownsClient;
+    }
 
     public async Task<HttpProbeResult> ProbeAsync(DiagnosticTarget target, TimeSpan timeout, CancellationToken cancellationToken)
     {
         var scheme = target.Scheme ?? "https";
-        var uri = new UriBuilder(scheme, target.Hostname, target.EffectivePort, target.Path).Uri;
+        var queryStart = target.Path.IndexOf('?');
+        var path = queryStart < 0 ? target.Path : target.Path[..queryStart];
+        var query = queryStart < 0 ? string.Empty : target.Path[(queryStart + 1)..];
+        var uri = new UriBuilder(scheme, target.Hostname, target.EffectivePort)
+        {
+            Path = path,
+            Query = query
+        }.Uri;
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(timeout);
         using var request = new HttpRequestMessage(HttpMethod.Get, uri);
@@ -195,5 +263,8 @@ public sealed class HttpClientDiagnostic : IHttpDiagnostic, IDisposable
         }
     }
 
-    public void Dispose() => _client.Dispose();
+    public void Dispose()
+    {
+        if (_ownsClient) _client.Dispose();
+    }
 }

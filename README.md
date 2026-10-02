@@ -16,11 +16,11 @@ The integration test project is separate. Its public DNS check runs only when `A
 ## Usage
 
 ```text
-aznetcheck check <target> [--service <id>] [--port <port>] [--timeout <seconds>] [--json] [--verbose]
+aznetcheck check <target> [--service <id>] [--port <port>] [--timeout <seconds>] [--ipv4 | --ipv6] [--json] [--verbose]
 aznetcheck detect <target> [--service <id>] [--json]
-aznetcheck dns <target> [--timeout <seconds>] [--json]
-aznetcheck tcp <target> [--port <port>] [--timeout <seconds>] [--json]
-aznetcheck tls <target> [--port <port>] [--timeout <seconds>] [--json]
+aznetcheck dns <target> [--timeout <seconds>] [--ipv4 | --ipv6] [--json]
+aznetcheck tcp <target> [--port <port>] [--timeout <seconds>] [--ipv4 | --ipv6] [--json]
+aznetcheck tls <target> [--port <port>] [--timeout <seconds>] [--ipv4 | --ipv6] [--json]
 aznetcheck http <url> [--timeout <seconds>] [--json]
 aznetcheck catalog list
 aznetcheck catalog show <service>
@@ -34,9 +34,20 @@ dotnet run --project src/AzNetCheck.Cli -- check contoso.vault.azure.net
 dotnet run --project src/AzNetCheck.Cli -- check https://contoso.vault.azure.net --json
 dotnet run --project src/AzNetCheck.Cli -- check internal-vault.corp --service keyvault --port 443
 dotnet run --project src/AzNetCheck.Cli -- tcp myserver.database.windows.net --port 1433
+dotnet run --project src/AzNetCheck.Cli -- check contoso.vault.azure.net --ipv4 --verbose
 ```
 
 Targets can be hostnames, `hostname:port`, HTTP(S) URLs, IPv4 or bracketed IPv6 with a port. `--timeout` applies the same per-stage timeout in seconds (maximum 300). `--no-color` is accepted; the initial renderer is plain text and never depends on color. JSON mode emits only the versioned report on standard output. Diagnostics exit with `0` when completed without blocking failures (warnings included), `1` for a connectivity failure, `2` for invalid input, `3` for cancellation/inconclusive completion, and `4` for an unexpected internal error.
+
+`--ipv4` and `--ipv6` restrict address attempts to the selected family; they cannot be combined. If DNS succeeds but yields no address in that family, the report is inconclusive and dependent tests are skipped. TLS connects to a resolved address that passed TCP while retaining the original hostname for SNI and certificate validation.
+
+## Reading results
+
+- HTTP `401` means the HTTPS endpoint responded; connectivity is reported as passed and authentication as a warning. No RBAC conclusion is inferred.
+- HTTP `403` means the endpoint responded but denied the request. Authorization and service network restrictions remain possible causes; the status alone does not identify one.
+- TCP `Connection refused` means the target host actively rejected the selected port. This is reported separately from timeout, with a suggestion to verify the listener and port.
+- A Private Link CNAME or private address is reported as an indicator. If TCP then fails, the report suggests checking DNS links, forwarding, routing, VPN/ExpressRoute and firewalls without claiming which is misconfigured.
+- With multiple resolved addresses, each TCP attempt is retained. A mix of success and failure is reported as partial connectivity, not as total failure.
 
 ## Supported services
 

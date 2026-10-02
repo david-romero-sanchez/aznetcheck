@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Net;
 using AzNetCheck.Azure;
 using AzNetCheck.Core;
 using AzNetCheck.Networking;
@@ -33,6 +34,13 @@ internal static class Program
                 return UsageError($"'{command}' requires a target.");
             var targetText = args[1];
             var options = ParseOptions(args.Skip(2).ToArray());
+            var unsupportedOption = FindUnsupportedOption(command, options.Keys);
+            if (unsupportedOption is not null)
+                return UsageError($"Option --{unsupportedOption} is not supported by command '{command}'.");
+            if (options.ContainsKey("ipv4") && options.ContainsKey("ipv6"))
+                return UsageError("Use only one of --ipv4 or --ipv6.");
+            var addressFamily = options.ContainsKey("ipv4") ? DiagnosticAddressFamily.IPv4 :
+                options.ContainsKey("ipv6") ? DiagnosticAddressFamily.IPv6 : DiagnosticAddressFamily.Any;
             if (!DiagnosticTargetParser.TryParse(targetText, out var target, out var parseError))
                 return UsageError(parseError ?? "Invalid target.");
             var current = target!;
@@ -55,11 +63,11 @@ internal static class Program
 
             return command switch
             {
-                "check" => await CheckAsync(current, options, catalog, timeout, cancellation.Token).ConfigureAwait(false),
+                "check" => await CheckAsync(current, options, catalog, timeout, addressFamily, cancellation.Token).ConfigureAwait(false),
                 "detect" => DetectCommand(current, options, catalog),
-                "dns" => await DnsCommandAsync(current, options, timeout, cancellation.Token).ConfigureAwait(false),
-                "tcp" => await TcpCommandAsync(current, options, catalog, timeout, cancellation.Token).ConfigureAwait(false),
-                "tls" => await TlsCommandAsync(current, options, timeout, cancellation.Token).ConfigureAwait(false),
+                "dns" => await DnsCommandAsync(current, options, timeout, addressFamily, cancellation.Token).ConfigureAwait(false),
+                "tcp" => await TcpCommandAsync(current, options, catalog, timeout, addressFamily, cancellation.Token).ConfigureAwait(false),
+                "tls" => await TlsCommandAsync(current, options, timeout, addressFamily, cancellation.Token).ConfigureAwait(false),
                 "http" => await HttpCommandAsync(current, options, timeout, cancellation.Token).ConfigureAwait(false),
                 _ => UsageError($"Unknown command '{command}'.")
             };
@@ -82,13 +90,17 @@ internal static class Program
     }
 
     private static async Task<int> CheckAsync(DiagnosticTarget target, IReadOnlyDictionary<string, string?> options,
-        AzureServiceCatalog catalog, TimeSpan timeout, CancellationToken cancellationToken)
+        AzureServiceCatalog catalog, TimeSpan timeout, DiagnosticAddressFamily addressFamily,
+        CancellationToken cancellationToken)
     {
+        var serviceOverride = options.GetValueOrDefault("service");
+        if (serviceOverride is not null && catalog.Detect(target.Hostname, serviceOverride).Status != ServiceDetectionStatus.Detected)
+            return UsageError($"Unknown Azure service '{serviceOverride}'.");
         using var http = new HttpClientDiagnostic();
         var engine = new DiagnosticEngine(catalog, new DnsClientDiagnostic(), new TcpSocketDiagnostic(),
             new TlsStreamDiagnostic(), http);
-        var report = await engine.RunAsync(target, options.GetValueOrDefault("service"),
-            new DiagnosticTimeouts(timeout, timeout, timeout, timeout), cancellationToken).ConfigureAwait(false);
+        var report = await engine.RunAsync(target, serviceOverride,
+            new DiagnosticTimeouts(timeout, timeout, timeout, timeout), cancellationToken, addressFamily).ConfigureAwait(false);
         if (options.ContainsKey("json"))
         {
             Console.WriteLine(JsonSerializer.Serialize(report, JsonOptions));
@@ -110,20 +122,56 @@ internal static class Program
     }
 
     private static async Task<int> DnsCommandAsync(DiagnosticTarget target, IReadOnlyDictionary<string, string?> options,
-        TimeSpan timeout, CancellationToken cancellationToken)
+        TimeSpan timeout, DiagnosticAddressFamily addressFamily, CancellationToken cancellationToken)
     {
-        var result = await new DnsClientDiagnostic().ResolveAsync(target.Hostname, timeout, cancellationToken).ConfigureAwait(false);
+        var result = target.IpAddress is not null
+            ? new DnsResolutionResult(DiagnosticStatus.NotApplicable, [target.IpAddress.ToString()], [], TimeSpan.Zero,
+                ErrorMessage: "The target is already an IP address; DNS resolution was not required.")
+            : await new DnsClientDiagnostic().ResolveAsync(target.Hostname, timeout, cancellationToken).ConfigureAwait(false);
+        var filteredAddresses = FilterAddresses(result.Addresses, addressFamily);
+        result = result with
+        {
+            Addresses = filteredAddresses,
+            Status = result.Addresses.Count > 0 && filteredAddresses.Count == 0 ? DiagnosticStatus.Inconclusive : result.Status,
+            ErrorCode = result.Addresses.Count > 0 && filteredAddresses.Count == 0 ? "AddressFamilyUnavailable" : result.ErrorCode,
+            ErrorMessage = result.Addresses.Count > 0 && filteredAddresses.Count == 0
+                ? $"No resolved address matches the requested {addressFamily} family."
+                : result.ErrorMessage
+        };
         PrintOrSerialize(result, options);
-        return result.Status == DiagnosticStatus.Failed ? 1 : 0;
+        return result.Status switch
+        {
+            DiagnosticStatus.Failed => 1,
+            DiagnosticStatus.Inconclusive => 3,
+            _ => 0
+        };
     }
 
     private static async Task<int> TcpCommandAsync(DiagnosticTarget target, IReadOnlyDictionary<string, string?> options,
-        AzureServiceCatalog catalog, TimeSpan timeout, CancellationToken cancellationToken)
+        AzureServiceCatalog catalog, TimeSpan timeout, DiagnosticAddressFamily addressFamily,
+        CancellationToken cancellationToken)
     {
-        var dns = await new DnsClientDiagnostic().ResolveAsync(target.Hostname, timeout, cancellationToken).ConfigureAwait(false);
-        var addresses = target.IpAddress is null ? dns.Addresses : [target.IpAddress.ToString()];
+        var serviceOverride = options.GetValueOrDefault("service");
+        if (serviceOverride is not null && catalog.Detect(target.Hostname, serviceOverride).Status != ServiceDetectionStatus.Detected)
+            return UsageError($"Unknown Azure service '{serviceOverride}'.");
+        var dns = target.IpAddress is not null
+            ? new DnsResolutionResult(DiagnosticStatus.NotApplicable, [target.IpAddress.ToString()], [], TimeSpan.Zero,
+                ErrorMessage: "The target is already an IP address; DNS resolution was not required.")
+            : await new DnsClientDiagnostic().ResolveAsync(target.Hostname, timeout, cancellationToken).ConfigureAwait(false);
+        if (dns.Status != DiagnosticStatus.Passed && !(target.IpAddress is not null && dns.Status == DiagnosticStatus.NotApplicable))
+        {
+            PrintOrSerialize(dns, options);
+            return dns.Status == DiagnosticStatus.Inconclusive ? 3 : 1;
+        }
+        var addresses = FilterAddresses(target.IpAddress is null ? dns.Addresses : [target.IpAddress.ToString()], addressFamily);
+        if (addresses.Count == 0)
+        {
+            PrintOrSerialize(new DnsResolutionResult(DiagnosticStatus.Inconclusive, [], dns.CnameChain, dns.Duration,
+                "AddressFamilyUnavailable", $"No resolved address matches the requested {addressFamily} family."), options);
+            return 3;
+        }
         var results = new List<TcpProbeResult>();
-        var port = target.ExplicitPort ?? catalog.Detect(target.Hostname, options.GetValueOrDefault("service"))
+        var port = target.ExplicitPort ?? catalog.Detect(target.Hostname, serviceOverride)
             .Service?.Transports.FirstOrDefault(transport => transport.Required)?.Port ?? target.EffectivePort;
         foreach (var value in addresses.Take(8))
             if (System.Net.IPAddress.TryParse(value, out var address))
@@ -133,11 +181,37 @@ internal static class Program
     }
 
     private static async Task<int> TlsCommandAsync(DiagnosticTarget target, IReadOnlyDictionary<string, string?> options,
-        TimeSpan timeout, CancellationToken cancellationToken)
+        TimeSpan timeout, DiagnosticAddressFamily addressFamily, CancellationToken cancellationToken)
     {
-        var result = await new TlsStreamDiagnostic().HandshakeAsync(target.Hostname, target.EffectivePort, timeout, cancellationToken).ConfigureAwait(false);
-        PrintOrSerialize(result, options);
-        return result.Status == DiagnosticStatus.Passed ? 0 : 1;
+        var dns = target.IpAddress is null
+            ? await new DnsClientDiagnostic().ResolveAsync(target.Hostname, timeout, cancellationToken).ConfigureAwait(false)
+            : new DnsResolutionResult(DiagnosticStatus.NotApplicable, [target.IpAddress.ToString()], [], TimeSpan.Zero,
+                ErrorMessage: "The target is already an IP address; DNS resolution was not required.");
+        if (dns.Status != DiagnosticStatus.Passed && !(target.IpAddress is not null && dns.Status == DiagnosticStatus.NotApplicable))
+        {
+            PrintOrSerialize(dns, options);
+            return dns.Status == DiagnosticStatus.Inconclusive ? 3 : 1;
+        }
+        var selected = FilterAddresses(dns.Addresses, addressFamily);
+        if (selected.Count == 0)
+        {
+            PrintOrSerialize(new DnsResolutionResult(DiagnosticStatus.Inconclusive, [], dns.CnameChain, dns.Duration,
+                "AddressFamilyUnavailable", $"No resolved address matches the requested {addressFamily} family."), options);
+            return 3;
+        }
+        var tls = new TlsStreamDiagnostic();
+        var results = new List<TlsProbeResult>();
+        foreach (var value in selected)
+        {
+            if (!System.Net.IPAddress.TryParse(value, out var address)) continue;
+            var result = await tls.HandshakeAsync(target.Hostname, address, target.EffectivePort, timeout, cancellationToken).ConfigureAwait(false);
+            results.Add(result);
+            if (result.Status == DiagnosticStatus.Passed) break;
+        }
+        var finalResult = results.FirstOrDefault(result => result.Status == DiagnosticStatus.Passed) ?? results.Last();
+        var selectedResult = finalResult;
+        PrintOrSerialize(selectedResult, options);
+        return selectedResult.Status == DiagnosticStatus.Passed ? 0 : 1;
     }
 
     private static async Task<int> HttpCommandAsync(DiagnosticTarget target, IReadOnlyDictionary<string, string?> options,
@@ -158,8 +232,14 @@ internal static class Program
         }
         if (args[0] == "show" && args.Length > 1)
         {
-            var match = catalog.Services.FirstOrDefault(service => service.Id.Contains(args[1], StringComparison.OrdinalIgnoreCase) ||
-                service.DisplayName.Contains(args[1], StringComparison.OrdinalIgnoreCase));
+            static string NormalizeServiceName(string value)
+            {
+                var normalized = string.Concat(value.Where(char.IsLetterOrDigit));
+                return normalized.StartsWith("azure", StringComparison.OrdinalIgnoreCase) ? normalized[5..] : normalized;
+            }
+            var requested = NormalizeServiceName(args[1]);
+            var match = catalog.Services.FirstOrDefault(service =>
+                NormalizeServiceName(service.Id) == requested || NormalizeServiceName(service.DisplayName) == requested);
             if (match is null) return UsageError($"No catalog service matches '{args[1]}'.");
             Console.WriteLine(JsonSerializer.Serialize(match, JsonOptions));
             return 0;
@@ -221,6 +301,14 @@ internal static class Program
         else Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
     }
 
+    private static IReadOnlyList<string> FilterAddresses(IEnumerable<string> addresses, DiagnosticAddressFamily family) =>
+        addresses.Where(value => System.Net.IPAddress.TryParse(value, out var address) && family switch
+        {
+            DiagnosticAddressFamily.IPv4 => address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork,
+            DiagnosticAddressFamily.IPv6 => address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6,
+            _ => true
+        }).ToArray();
+
     private static Dictionary<string, string?> ParseOptions(string[] args)
     {
         var options = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
@@ -228,7 +316,7 @@ internal static class Program
         {
             if (!args[index].StartsWith("--", StringComparison.Ordinal)) throw new ArgumentException($"Unexpected argument '{args[index]}'.");
             var name = args[index][2..];
-            if (name is "json" or "verbose" or "debug" or "no-color") options[name] = null;
+            if (name is "json" or "verbose" or "debug" or "no-color" or "ipv4" or "ipv6") options[name] = null;
             else if (name is "port" or "timeout" or "service")
             {
                 if (++index >= args.Length || args[index].StartsWith("--", StringComparison.Ordinal))
@@ -240,11 +328,40 @@ internal static class Program
         return options;
     }
 
+    private static string? FindUnsupportedOption(string command, IEnumerable<string> options)
+    {
+        foreach (var option in options)
+        {
+            var supported = option is "json" or "debug" or "no-color" || (command, option) switch
+            {
+                ("check", "service" or "port" or "timeout" or "verbose" or "ipv4" or "ipv6") => true,
+                ("detect", "service") => true,
+                ("dns", "timeout" or "ipv4" or "ipv6") => true,
+                ("tcp", "service" or "port" or "timeout" or "ipv4" or "ipv6") => true,
+                ("tls", "port" or "timeout" or "ipv4" or "ipv6") => true,
+                ("http", "port" or "timeout") => true,
+                _ => false
+            };
+            if (!supported) return option;
+        }
+        return null;
+    }
+
     private static JsonSerializerOptions CreateJsonOptions()
     {
         var options = new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
         options.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase));
+        options.Converters.Add(new IpAddressJsonConverter());
         return options;
+    }
+
+    private sealed class IpAddressJsonConverter : JsonConverter<IPAddress>
+    {
+        public override IPAddress? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
+            IPAddress.TryParse(reader.GetString(), out var address) ? address : null;
+
+        public override void Write(Utf8JsonWriter writer, IPAddress value, JsonSerializerOptions options) =>
+            writer.WriteStringValue(value.ToString());
     }
 
     private static int UsageError(string message)
@@ -257,16 +374,16 @@ internal static class Program
     private static void PrintHelp() => Console.WriteLine("""
 AzNetCheck 0.1.0
 Usage:
-  aznetcheck check <target> [--service <id>] [--port <port>] [--timeout <seconds>] [--json] [--verbose]
-  aznetcheck detect <target> [--service <id>] [--json]
-  aznetcheck dns <target> [--timeout <seconds>] [--json]
-  aznetcheck tcp <target> [--port <port>] [--timeout <seconds>] [--json]
-  aznetcheck tls <target> [--port <port>] [--timeout <seconds>] [--json]
+    aznetcheck check <target> [--service <id>] [--port <port>] [--timeout <seconds>] [--ipv4 | --ipv6] [--json] [--verbose]
+    aznetcheck detect <target> [--service <id>] [--json]
+    aznetcheck dns <target> [--timeout <seconds>] [--ipv4 | --ipv6] [--json]
+    aznetcheck tcp <target> [--port <port>] [--timeout <seconds>] [--ipv4 | --ipv6] [--json]
+    aznetcheck tls <target> [--port <port>] [--timeout <seconds>] [--ipv4 | --ipv6] [--json]
   aznetcheck http <url> [--timeout <seconds>] [--json]
   aznetcheck catalog list | catalog show <service>
   aznetcheck version
 
-Options: --debug --no-color
+Options: --debug --no-color --ipv4 --ipv6
 Timeout is specified in seconds. Diagnostics do not authenticate or modify Azure resources.
 """);
 }
