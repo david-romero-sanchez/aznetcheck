@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Net;
 using AzNetCheck.Azure;
 using AzNetCheck.Core;
+using AzNetCheck.Updater;
 using Spectre.Console;
 
 namespace AzNetCheck.Cli;
@@ -20,15 +21,25 @@ internal static partial class Program
         Option<bool>? Ipv6 = null,
         Option<bool>? Verbose = null);
 
-    private static async Task<int> RunCommandLineAsync(string[] args)
+    private static async Task<int> RunCommandLineAsync(string[] args, string? postUpdateTransactionPath = null)
     {
-        if (args.Length == 0)
+        if (args.Length == 0 && postUpdateTransactionPath is null)
         {
             RenderOverview();
             return 0;
         }
 
         var root = BuildRootCommand();
+        if (postUpdateTransactionPath is not null)
+        {
+            if (args.Length == 0)
+            {
+                RenderOverview();
+                return await CreateUpdateInstaller().ConfirmHealthAsync(postUpdateTransactionPath).ConfigureAwait(false)
+                    ? 0 : 4;
+            }
+            if (!await CreateUpdateInstaller().ConfirmHealthAsync(postUpdateTransactionPath).ConfigureAwait(false)) return 4;
+        }
         var parseResult = root.Parse(args);
         if (parseResult.Errors.Count > 0)
         {
@@ -49,7 +60,7 @@ internal static partial class Program
     private static void RenderOverview()
     {
         var console = CreateConsole(noColor: false);
-        console.MarkupLine("[bold deepskyblue1]AzNetCheck[/] [grey]0.1.0[/]");
+        console.MarkupLine($"[bold deepskyblue1]AzNetCheck[/] [grey]{GetCurrentVersion()}[/]");
         console.MarkupLine("Diagnoses connectivity from this machine to Microsoft Azure services.");
         console.MarkupLine("Interprets each layer independently: HTTP 401/403 confirms the endpoint was reached; it is not a TCP failure.");
 
@@ -75,6 +86,8 @@ internal static partial class Program
         commands.AddRow("http <url>", "Sends a safe GET request and displays the HTTP status.");
         commands.AddRow("catalog", "Lists profiles; equivalent to catalog list.");
         commands.AddRow("catalog show <service>", "Displays profile transports and authentication scope.");
+        commands.AddRow("update check (optional --force)", "Checks GitHub Releases for a newer signed stable version.");
+        commands.AddRow("update apply (optional --force)", "Downloads, verifies, installs, and rolls back if first start fails.");
         commands.AddRow("version", "Displays the application version.");
         console.Write(commands);
 
@@ -82,14 +95,15 @@ internal static partial class Program
         options.AddColumn("Option");
         options.AddColumn("Available for");
         options.AddColumn("Purpose");
-        options.AddRow("--json", "check, detect, dns, tcp, tls, http, catalog", "Writes JSON without tables or additional text.");
-        options.AddRow("--no-color", "Diagnostic commands and catalog", "Disables ANSI styling.");
-        options.AddRow("--debug", "Diagnostic commands and catalog", "Adds a safe exception type to internal error output.");
+        options.AddRow("--json", "Diagnostic, catalog, and update commands", "Writes JSON without tables or additional text.");
+        options.AddRow("--no-color", "Diagnostic, catalog, and update commands", "Disables ANSI styling.");
+        options.AddRow("--debug", "Diagnostic, catalog, and update commands", "Adds a safe exception type to internal error output.");
         options.AddRow("--timeout <seconds>", "check, dns, tcp, tls, http", "Per-stage timeout; greater than 0 and at most 300 seconds.");
         options.AddRow("--service <id>", "check, detect, tcp", "Forces a profile for a DNS alias.");
         options.AddRow("--port <port>", "check, tcp, tls, http", "Overrides the port (1-65535).");
         options.AddRow("--ipv4 / --ipv6", "check, dns, tcp, tls", "Restricts addresses to one family; do not combine.");
         options.AddRow("--verbose", "check", "Includes detailed diagnostic evidence.");
+        options.AddRow("--force", "update check/apply", "Bypasses the check interval; apply can retry a failed version.");
         options.AddRow("--help", "All commands", "Displays concise help and command options.");
         console.Write(options);
 
@@ -99,6 +113,8 @@ internal static partial class Program
         console.MarkupLine("  aznetcheck check internal-vault.corp --service keyvault --ipv4");
         console.MarkupLine("  aznetcheck tcp myserver.database.windows.net --port 1433");
         console.MarkupLine("  aznetcheck catalog show keyvault");
+        console.MarkupLine("  aznetcheck update check");
+        console.MarkupLine("  aznetcheck update apply");
         console.MarkupLine("\n[grey]Read-only diagnostics; Azure authentication is not started and resources are not modified.[/]");
     }
 
@@ -199,10 +215,37 @@ internal static partial class Program
         catalogCommand.Subcommands.Add(list);
         catalogCommand.Subcommands.Add(show);
 
+        var updateCommand = new Command("update", "Check for and apply verified updates from GitHub Releases.");
+        var updateCheck = new Command("check", "Check GitHub Releases for a newer stable version.");
+        var updateCheckOutput = AddOutputOptions(updateCheck);
+        var updateCheckForce = new Option<bool>("--force") { Description = "Ignore the check interval and failed-version block." };
+        updateCheck.Options.Add(updateCheckForce);
+        updateCheck.SetAction(async (parse, cancellationToken) =>
+        {
+            var result = await CreateUpdateManager().CheckForUpdatesAsync(parse.GetValue(updateCheckForce), cancellationToken)
+                .ConfigureAwait(false);
+            return RenderUpdateCheckResult(result, parse.GetValue(updateCheckOutput.Json),
+                parse.GetValue(updateCheckOutput.NoColor));
+        });
+
+        var updateApply = new Command("apply", "Download, verify, and transactionally install the latest stable release.");
+        var updateApplyOutput = AddOutputOptions(updateApply);
+        var updateApplyForce = new Option<bool>("--force") { Description = "Retry a version previously marked as failed." };
+        updateApply.Options.Add(updateApplyForce);
+        updateApply.SetAction(async (parse, cancellationToken) =>
+        {
+            var result = await CreateUpdateManager().ApplyLatestAsync(parse.GetValue(updateApplyForce), cancellationToken)
+                .ConfigureAwait(false);
+            return RenderUpdateApplyResult(result, parse.GetValue(updateApplyOutput.Json),
+                parse.GetValue(updateApplyOutput.NoColor));
+        });
+        updateCommand.Subcommands.Add(updateCheck);
+        updateCommand.Subcommands.Add(updateApply);
+
         var version = new Command("version", "Display the AzNetCheck version.");
         version.SetAction(_ =>
         {
-            Console.Out.WriteLine("AzNetCheck 0.1.0");
+            Console.Out.WriteLine($"AzNetCheck {GetCurrentVersion()}");
             return 0;
         });
 
@@ -213,6 +256,7 @@ internal static partial class Program
         root.Subcommands.Add(tls);
         root.Subcommands.Add(http);
         root.Subcommands.Add(catalogCommand);
+        root.Subcommands.Add(updateCommand);
         root.Subcommands.Add(version);
         return root;
     }
@@ -388,6 +432,64 @@ internal static partial class Program
     {
         var normalized = string.Concat(value.Where(char.IsLetterOrDigit));
         return normalized.StartsWith("azure", StringComparison.OrdinalIgnoreCase) ? normalized[5..] : normalized;
+    }
+
+    private static int RenderUpdateCheckResult(UpdateCheckResult result, bool json, bool noColor)
+    {
+        if (json) Console.Out.WriteLine(SerializeJson(result));
+        else
+        {
+            var console = CreateConsole(noColor);
+            switch (result.Status)
+            {
+                case UpdateCheckStatus.UpdateAvailable:
+                    console.MarkupLine($"[green]Update available:[/] AzNetCheck {Markup.Escape(result.Manifest!.Version)}");
+                    console.MarkupLine("Run 'aznetcheck update apply' to download, verify, and install it.");
+                    break;
+                case UpdateCheckStatus.UpToDate:
+                    console.MarkupLine("[green]AzNetCheck is up to date.[/]");
+                    break;
+                case UpdateCheckStatus.CheckSkippedRecently:
+                    console.MarkupLine("Update check skipped; the last check is within its interval. Use --force to check now.");
+                    break;
+                case UpdateCheckStatus.UpdateBlockedAfterFailure:
+                    console.MarkupLine($"[yellow]Update blocked:[/] {Markup.Escape(result.Error ?? "This version previously failed.")}");
+                    break;
+                case UpdateCheckStatus.UnsupportedPlatform:
+                    console.MarkupLine($"[yellow]Unsupported platform:[/] {Markup.Escape(result.Error ?? "No update asset is configured.")}");
+                    break;
+                default:
+                    console.MarkupLine($"[red]Update check failed:[/] {Markup.Escape(result.Error ?? result.Status.ToString())}");
+                    break;
+            }
+        }
+        return result.Status switch
+        {
+            UpdateCheckStatus.CheckFailed or UpdateCheckStatus.InvalidManifest => 3,
+            UpdateCheckStatus.UnsupportedPlatform => 2,
+            _ => 0
+        };
+    }
+
+    private static int RenderUpdateApplyResult(UpdateApplyResult result, bool json, bool noColor)
+    {
+        if (json) Console.Out.WriteLine(SerializeJson(result));
+        else
+        {
+            var console = CreateConsole(noColor);
+            var message = result.Message ?? result.Error ?? result.Status.ToString();
+            var successful = result.Status is UpdateApplyStatus.Started or UpdateApplyStatus.AlreadyCurrent;
+            console.MarkupLine(successful
+                ? $"[green]{Markup.Escape(message)}[/]"
+                : $"[red]Update failed:[/] {Markup.Escape(message)}");
+        }
+        return result.Status switch
+        {
+            UpdateApplyStatus.Started or UpdateApplyStatus.AlreadyCurrent => 0,
+            UpdateApplyStatus.InstallationNotSupported or UpdateApplyStatus.UnsupportedPlatform => 2,
+            UpdateApplyStatus.CheckFailed or UpdateApplyStatus.InvalidManifest => 3,
+            _ => 1
+        };
     }
 
     private static void RenderReport(DiagnosticReport report, bool verbose, bool noColor)

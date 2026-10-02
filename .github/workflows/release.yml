@@ -1,0 +1,147 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-and-test:
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Validate SemVer tag
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $tag = $env:RELEASE_TAG
+          $pattern = '^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?$'
+          if ($tag -notmatch $pattern) { throw "Tag '$tag' is not a supported vMAJOR.MINOR.PATCH[-prerelease] SemVer tag." }
+          foreach ($component in @($Matches[1], $Matches[2], $Matches[3])) {
+            if ([UInt64]$component -gt 65535) { throw "Version component '$component' exceeds the .NET assembly version range." }
+          }
+      - run: dotnet restore AzNetCheck.sln
+      - run: dotnet test AzNetCheck.sln --configuration Release --no-restore
+
+  publish-release:
+    needs: validate-and-test
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Validate tag and extract release version
+        id: version
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $tag = $env:RELEASE_TAG
+          $pattern = '^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?$'
+          if ($tag -notmatch $pattern) { throw "Tag '$tag' is not a supported SemVer release tag." }
+          foreach ($component in @($Matches[1], $Matches[2], $Matches[3])) {
+            if ([UInt64]$component -gt 65535) { throw "Version component '$component' exceeds the .NET assembly version range." }
+          }
+          "version=$($tag.Substring(1))" >> $env:GITHUB_OUTPUT
+          "assemblyVersion=$($Matches[1]).$($Matches[2]).$($Matches[3]).0" >> $env:GITHUB_OUTPUT
+          "prerelease=$([bool]$Matches[4])" >> $env:GITHUB_OUTPUT
+      - name: Publish self-contained single-file win-x64
+        shell: pwsh
+        run: >-
+          dotnet publish src/AzNetCheck.Cli/AzNetCheck.Cli.csproj
+          --configuration Release
+          --runtime win-x64
+          --self-contained true
+          --output artifacts/publish/win-x64
+          -p:PublishSingleFile=true
+          -p:PublishTrimmed=false
+          -p:Version=${{ steps.version.outputs.version }}
+          -p:AssemblyVersion=${{ steps.version.outputs.assemblyVersion }}
+          -p:FileVersion=${{ steps.version.outputs.assemblyVersion }}
+          -p:InformationalVersion=${{ steps.version.outputs.version }}
+      - name: Verify publish output and prepare stable asset name
+        shell: pwsh
+        run: |
+          $publishedExe = Join-Path $PWD 'artifacts/publish/win-x64/aznetcheck.exe'
+          if (-not (Test-Path $publishedExe -PathType Leaf)) { throw "Publish output missing: $publishedExe" }
+          $versionInfo = (Get-Item $publishedExe).VersionInfo
+          if (-not $versionInfo.ProductVersion.StartsWith('${{ steps.version.outputs.version }}')) { throw "Executable ProductVersion '$($versionInfo.ProductVersion)' does not match tag version." }
+          if ($versionInfo.FileVersion -ne '${{ steps.version.outputs.assemblyVersion }}') { throw "Executable FileVersion '$($versionInfo.FileVersion)' does not match the tag-derived version." }
+          $compiledAssembly = Join-Path $PWD 'src/AzNetCheck.Cli/obj/Release/net10.0/win-x64/aznetcheck.dll'
+          if (-not (Test-Path $compiledAssembly -PathType Leaf)) { throw "Compiled assembly not found: $compiledAssembly" }
+          $assemblyVersion = [System.Reflection.AssemblyName]::GetAssemblyName($compiledAssembly).Version.ToString()
+          if ($assemblyVersion -ne '${{ steps.version.outputs.assemblyVersion }}') { throw "AssemblyVersion '$assemblyVersion' does not match the tag-derived version." }
+          $asset = Join-Path $PWD 'artifacts/publish/win-x64/aznetcheck-win-x64.exe'
+          Copy-Item -LiteralPath $publishedExe -Destination $asset
+          $sourceHash = (Get-FileHash -LiteralPath $publishedExe -Algorithm SHA256).Hash
+          $assetHash = (Get-FileHash -LiteralPath $asset -Algorithm SHA256).Hash
+          if ($sourceHash -ne $assetHash) { throw 'Release asset differs from the published executable.' }
+      - name: Materialize signing private key from GitHub Actions secret
+        shell: pwsh
+        env:
+          UPDATE_SIGNING_PRIVATE_KEY_PEM: ${{ secrets.UPDATE_SIGNING_PRIVATE_KEY_PEM }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:UPDATE_SIGNING_PRIVATE_KEY_PEM)) { throw 'GitHub Actions secret UPDATE_SIGNING_PRIVATE_KEY_PEM is required.' }
+          $path = Join-Path $env:RUNNER_TEMP 'aznetcheck-update-signing-private.pem'
+          [System.IO.File]::WriteAllText($path, $env:UPDATE_SIGNING_PRIVATE_KEY_PEM, [System.Text.UTF8Encoding]::new($false))
+          "UPDATE_SIGNING_PRIVATE_KEY_PATH=$path" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Generate update manifest and signature
+        shell: pwsh
+        run: >-
+          dotnet run --project scripts/ReleaseManifestGenerator/ReleaseManifestGenerator.csproj
+          --configuration Release --
+          '${{ steps.version.outputs.version }}'
+          'win-x64'
+          'david-romero-sanchez'
+          'aznetcheck'
+          'artifacts/publish/win-x64/aznetcheck-win-x64.exe'
+          "$env:UPDATE_SIGNING_PRIVATE_KEY_PATH"
+      - name: Verify generated manifest with embedded public key
+        shell: pwsh
+        run: >-
+          dotnet run --project scripts/ReleaseManifestGenerator/ReleaseManifestGenerator.csproj
+          --configuration Release --
+          --verify
+          'artifacts/publish/win-x64/update.json'
+          'artifacts/publish/win-x64/update.json.sig'
+      - name: Create GitHub prerelease
+        if: steps.version.outputs.prerelease == 'True'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          gh release create "${{ github.ref_name }}" `
+            artifacts/publish/win-x64/aznetcheck-win-x64.exe `
+            artifacts/publish/win-x64/update.json `
+            artifacts/publish/win-x64/update.json.sig `
+            --generate-notes --prerelease --title "AzNetCheck ${{ steps.version.outputs.version }}"
+      - name: Create GitHub stable release
+        if: steps.version.outputs.prerelease != 'True'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          gh release create "${{ github.ref_name }}" `
+            artifacts/publish/win-x64/aznetcheck-win-x64.exe `
+            artifacts/publish/win-x64/update.json `
+            artifacts/publish/win-x64/update.json.sig `
+            --generate-notes --latest --title "AzNetCheck ${{ steps.version.outputs.version }}"
+      - name: Remove private key from runner workspace
+        if: always()
+        shell: pwsh
+        run: |
+          $key = Join-Path $env:RUNNER_TEMP 'aznetcheck-update-signing-private.pem'
+          if (Test-Path $key) { Remove-Item -LiteralPath $key -Force }

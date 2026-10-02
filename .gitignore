@@ -37,6 +37,8 @@ ScaffoldingReadMe.txt
 *.nupkg
 # NuGet Symbol Packages
 *.snupkg
+*update-signing-private.pem
+*update-signing-private.key
 
 # dotenv environment variables file
 .env

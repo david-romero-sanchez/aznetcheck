@@ -14,6 +14,8 @@ public sealed class CommandLineTests
         Assert.Equal(0, result.ExitCode);
         Assert.Contains("check <target>", result.StandardOutput);
         Assert.Contains("catalog", result.StandardOutput);
+        Assert.Contains("update", result.StandardOutput);
+        Assert.DoesNotContain("internal-apply-update", result.StandardOutput);
     }
 
     [Fact]
@@ -85,6 +87,36 @@ public sealed class CommandLineTests
         Assert.Equal("1.0", report.GetProperty("schemaVersion").GetString());
         Assert.Equal("inconclusive", report.GetProperty("summary").GetProperty("overallStatus").GetString());
         Assert.Equal("skipped", report.GetProperty("results")[2].GetProperty("status").GetString());
+    }
+
+    [Fact]
+    public async Task Update_apply_refuses_dotnet_host_mode_before_network_or_filesystem_changes()
+    {
+        var result = await RunAsync("update", "apply", "--json");
+
+        Assert.Equal(2, result.ExitCode);
+        using var document = JsonDocument.Parse(result.StandardOutput);
+        Assert.Equal("installationNotSupported", document.RootElement.GetProperty("status").GetString());
+        Assert.Contains("requires the published self-contained aznetcheck.exe", document.RootElement.GetProperty("error").GetString());
+    }
+
+    [Fact]
+    public async Task Update_check_help_exposes_force_option_without_contacting_github()
+    {
+        var result = await RunAsync("update", "check", "--help");
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("--force", result.StandardOutput);
+    }
+
+    [Fact]
+    public async Task Update_apply_help_explains_transactional_install_and_force_retry()
+    {
+        var result = await RunAsync("update", "apply", "--help");
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("--force", result.StandardOutput);
+        Assert.Contains("transactionally", result.StandardOutput);
     }
 
     private static async Task<ProcessResult> RunAsync(params string[] arguments)

@@ -29,6 +29,8 @@ The production solution is organized into four projects:
 
 Tests are under `tests/`, including CLI process tests in `AzNetCheck.Cli.Tests`.
 
+The GitHub-only update implementation is isolated in `src/AzNetCheck.Updater`; it does not depend on an update service or a third-party updater framework.
+
 ## Getting started
 
 Running `aznetcheck` with no arguments displays an overview of the capabilities, commands, options, and examples. `aznetcheck --help` displays the concise command-tree help.
@@ -50,6 +52,8 @@ aznetcheck tls <target> [--port <port>] [--timeout <seconds>] [--ipv4 | --ipv6] 
 aznetcheck http <url> [--port <port>] [--timeout <seconds>] [--json] [--no-color] [--debug]
 aznetcheck catalog [list] [--json] [--no-color] [--debug]
 aznetcheck catalog show <service> [--json] [--no-color] [--debug]
+aznetcheck update check [--force] [--json] [--no-color]
+aznetcheck update apply [--force] [--json] [--no-color]
 aznetcheck version
 ```
 
@@ -65,6 +69,8 @@ aznetcheck version
 - `--verbose` adds diagnostic evidence to the `check` display.
 - `--no-color` disables ANSI styling in human-readable output.
 - `--debug` includes the exception type for unexpected internal errors. It does not print secrets or credentials.
+- `aznetcheck update check` verifies the latest stable GitHub release manifest and reports whether an update exists. Checks are normally throttled for 24 hours; `--force` bypasses the interval and failed-version cooldown.
+- `aznetcheck update apply` downloads and verifies the asset, then starts the same executable in a private updater mode. `--force` allows retrying a version that previously failed its first-start check.
 - `--help` displays help for the root command or an individual command.
 
 ## Examples
@@ -80,6 +86,8 @@ aznetcheck tls contoso.vault.azure.net --port 443
 aznetcheck http https://example.com
 aznetcheck catalog
 aznetcheck catalog show keyvault
+aznetcheck update check
+aznetcheck update apply
 ```
 
 Targets may be hostnames, `hostname:port`, HTTP/HTTPS URLs, IPv4 addresses, or IPv6 addresses. IPv6 literals with a port use brackets, for example `[2001:db8::1]:443`.
@@ -136,9 +144,74 @@ Ctrl+C is propagated through the System.CommandLine invocation cancellation toke
 - This release does not implement Azure Identity authentication, interactive login, service-specific authorization probes, custom catalog loading, explicit proxy diagnostics, Windows WinHTTP inspection, or Azure Resource Manager configuration inspection.
 - Optional Azure Files SMB and Service Bus/Event Hubs AMQP transports are not part of the automatic `check` sequence.
 
+### Self-update safety
+
+Self-update is supported only by the published, self-contained Windows `win-x64` `aznetcheck.exe`, running from a directory writable by the current user. Running under `dotnet`, a renamed executable, a non-Windows runtime, or a protected/non-writable install directory is refused before downloading or changing files. The updater does not request UAC elevation. A user-writable location such as `%LOCALAPPDATA%\Programs\AzNetCheck` or a writable portable folder is recommended.
+
+The updater reads a small local state file below the current user's application data directory. It checks GitHub at most once per 24 hours by default, remembers versions that failed the first-start check for seven days, and permits a manual retry with `--force`. Installation takes a per-installation named lock. It stages and hashes the signed asset before launching the downloaded executable in a private internal mode, waits for the old process, creates a same-directory backup, atomically replaces the executable where the filesystem supports `File.Replace`, and waits for a first-start health handshake. If replacement or health confirmation fails, it restores the backup and attempts to restart the previous version. Interrupted transactions are recorded locally and recovery is attempted on the next normal launch, provided a runnable AzNetCheck executable starts. If the newly installed executable cannot start at all after a machine restart, the previous `.old` backup may require manual restoration. File and process operations are tested through fakes; filesystem/platform behavior can still vary by Windows filesystem and security policy.
+
+Release assets use deterministic names. The current manifest supports `win-x64` only. `update.json.sig` is the Base64 encoding of an RSA PKCS#1 v1.5 SHA-256 signature followed by a newline. The signature covers the exact UTF-8 bytes of `update.json`; the client verifies it with the embedded PEM public key before parsing the manifest. It then validates the versioned GitHub release URL, expected runtime identifier, filename, declared size, and SHA-256 before executing the downloaded program. Stable clients use the GitHub `/releases/latest/download/` endpoint and do not consume prereleases.
+
+### Configure release signing once
+
+Generate a 3072-bit RSA keypair. The private key is written outside the repository under the current user's profile; the public key is written to the embedded resource path. Do this once and keep a secure backup of the private key.
+
+```powershell
+.\scripts\New-UpdateSigningKey.ps1
+```
+
+The script calls the .NET 10 key generator at `scripts/UpdateKeyGenerator`. If local PowerShell policy blocks scripts, invoke the generator directly instead:
+
+```powershell
+$privateKey = Join-Path $HOME ".aznetcheck\update-signing-private.pem"
+$publicKey = "src\AzNetCheck.Updater\Keys\update-signing-public.pem"
+dotnet run --project scripts/UpdateKeyGenerator/UpdateKeyGenerator.csproj -c Release -- $privateKey $publicKey
+```
+
+Commit only `src/AzNetCheck.Updater/Keys/update-signing-public.pem`. Never commit the private key. In GitHub, open **Repository Settings > Secrets and variables > Actions > New repository secret** and create the secret named exactly `UPDATE_SIGNING_PRIVATE_KEY_PEM` with the contents of the private PEM file. The release workflow refuses to publish without it and verifies the generated signature using the embedded public key, so a mismatched keypair fails before a release is created.
+
+### Publish a release
+
+After the public key and GitHub Actions secret are configured, create a SemVer tag and push it:
+
+```powershell
+git tag v1.4.0
+git push origin v1.4.0
+```
+
+The release workflow validates the tag, runs restore/tests on Windows and Linux, then publishes `win-x64` as Release, self-contained, single-file, and untrimmed. It derives assembly/file/informational versions from the tag without the leading `v`, calculates the executable size and SHA-256, writes `update.json`, signs its exact bytes, verifies the signature, and creates the GitHub Release using the repository's `GITHUB_TOKEN` (`contents: write`). Tags such as `v1.4.0-beta.1` create prereleases; stable clients do not discover them through the `latest` endpoint.
+
+The release assets are `aznetcheck-win-x64.exe`, `update.json`, and `update.json.sig`. Manifest URLs point to the version-specific release, never to `latest`.
+
+```text
+tag v1.4.0
+  |
+  v
+GitHub Actions
+  +--> validate tag and test
+  +--> publish single-file win-x64
+  +--> hash executable and create update.json
+  +--> sign exact manifest bytes
+  +--> verify signature with embedded public key
+  |
+  v
+GitHub Release
+  +--> aznetcheck-win-x64.exe
+  +--> update.json
+  +--> update.json.sig
+
+Installed app
+  +--> download and verify signed manifest
+  +--> download and verify size and SHA-256
+  +--> run downloaded executable as private updater
+  +--> wait for old process and back up installation
+  +--> replace and restart installed executable
+  +--> confirm first start, or roll back
+```
+
 ## Publishing for Windows
 
-Publish a self-contained, single-file `win-x64` executable:
+Publish a self-contained, single-file, untrimmed `win-x64` executable:
 
 ```powershell
 dotnet publish src/AzNetCheck.Cli/AzNetCheck.Cli.csproj `
@@ -155,4 +228,4 @@ The output includes `aznetcheck.exe` under `src/AzNetCheck.Cli/bin/Release/net10
 dotnet publish src/AzNetCheck.Cli/AzNetCheck.Cli.csproj -p:PublishProfile=win-x64
 ```
 
-Trimming is intentionally disabled (`PublishTrimmed=false`). The application uses JSON serialization and console libraries, and the current release prioritizes reliable single-file publishing over a smaller executable. Do not enable trimming for production artifacts until the trimmed publish and all CLI/catalog/JSON flows have dedicated validation. The project is prepared for future runtime identifiers, but only `win-x64` is currently configured and verified for single-file publishing.
+Trimming is intentionally disabled (`PublishTrimmed=false`) in both publish profiles. The application uses JSON serialization and console libraries, and the current release prioritizes reliable single-file publishing over a smaller executable. Do not enable trimming for production artifacts until the trimmed publish and all CLI/catalog/JSON/update flows have dedicated validation. Only `win-x64` is currently configured for self-update and release publishing.

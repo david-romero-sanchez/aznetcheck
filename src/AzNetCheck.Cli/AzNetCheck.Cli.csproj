@@ -10,6 +10,7 @@
     <PackageReference Include="Spectre.Console" Version="0.57.2" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\AzNetCheck.Updater\AzNetCheck.Updater.csproj" />
     <ProjectReference Include="..\AzNetCheck.Core\AzNetCheck.Core.csproj" />
     <ProjectReference Include="..\AzNetCheck.Networking\AzNetCheck.Networking.csproj" />
     <ProjectReference Include="..\AzNetCheck.Azure\AzNetCheck.Azure.csproj" />

@@ -10,6 +10,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AzNetCheck.Networking", "sr
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AzNetCheck.Azure", "src\AzNetCheck.Azure\AzNetCheck.Azure.csproj", "{D22E62E4-BA72-460A-9A83-19900C310004}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AzNetCheck.Updater", "src\AzNetCheck.Updater\AzNetCheck.Updater.csproj", "{D22E62E4-BA72-460A-9A83-19900C310010}"
+EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AzNetCheck.Core.Tests", "tests\AzNetCheck.Core.Tests\AzNetCheck.Core.Tests.csproj", "{D22E62E4-BA72-460A-9A83-19900C310005}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AzNetCheck.Networking.Tests", "tests\AzNetCheck.Networking.Tests\AzNetCheck.Networking.Tests.csproj", "{D22E62E4-BA72-460A-9A83-19900C310006}"
@@ -19,6 +21,8 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AzNetCheck.IntegrationTests", "tests\AzNetCheck.IntegrationTests\AzNetCheck.IntegrationTests.csproj", "{D22E62E4-BA72-460A-9A83-19900C310008}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AzNetCheck.Cli.Tests", "tests\AzNetCheck.Cli.Tests\AzNetCheck.Cli.Tests.csproj", "{D22E62E4-BA72-460A-9A83-19900C310009}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AzNetCheck.Updater.Tests", "tests\AzNetCheck.Updater.Tests\AzNetCheck.Updater.Tests.csproj", "{D22E62E4-BA72-460A-9A83-19900C310011}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -58,9 +62,17 @@ Global
 		{D22E62E4-BA72-460A-9A83-19900C310008}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{D22E62E4-BA72-460A-9A83-19900C310008}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{D22E62E4-BA72-460A-9A83-19900C310008}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D22E62E4-BA72-460A-9A83-19900C310010}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D22E62E4-BA72-460A-9A83-19900C310010}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D22E62E4-BA72-460A-9A83-19900C310010}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D22E62E4-BA72-460A-9A83-19900C310010}.Release|Any CPU.Build.0 = Release|Any CPU
 		{D22E62E4-BA72-460A-9A83-19900C310009}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{D22E62E4-BA72-460A-9A83-19900C310009}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{D22E62E4-BA72-460A-9A83-19900C310009}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{D22E62E4-BA72-460A-9A83-19900C310009}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D22E62E4-BA72-460A-9A83-19900C310011}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D22E62E4-BA72-460A-9A83-19900C310011}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D22E62E4-BA72-460A-9A83-19900C310011}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D22E62E4-BA72-460A-9A83-19900C310011}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

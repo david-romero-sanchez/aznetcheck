@@ -4,6 +4,7 @@ using System.Text.Json;
 using AzNetCheck.Azure;
 using AzNetCheck.Core;
 using AzNetCheck.Networking;
+using AzNetCheck.Updater;
 using Spectre.Console;
 
 namespace AzNetCheck.Cli;
@@ -15,6 +16,24 @@ internal static partial class Program
     {
         try
         {
+            var internalCommand = await TryRunInternalUpdateCommandAsync(args).ConfigureAwait(false);
+            if (internalCommand is { Handled: true })
+            {
+                if (internalCommand.Error is not null)
+                    Console.Error.WriteLine("Internal updater arguments are invalid.");
+                if (internalCommand.PostUpdateTransactionPath is not null)
+                    return await RunCommandLineAsync([], internalCommand.PostUpdateTransactionPath).ConfigureAwait(false);
+                return internalCommand.ExitCode;
+            }
+
+            try
+            {
+                if (await CreateUpdateInstaller().RecoverPendingAsync().ConfigureAwait(false)) return 0;
+            }
+            catch (Exception exception)
+            {
+                new ConsoleUpdateLogger().Log("update-recovery-failed", exception.GetType().Name);
+            }
             return await RunCommandLineAsync(args).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
@@ -29,7 +48,7 @@ internal static partial class Program
         catch (Exception exception)
         {
             CreateConsole(args.Contains("--no-color", StringComparer.Ordinal), Console.Error)
-                .MarkupLine("[red]Error:[/] Unexpected diagnostic error.");
+                .MarkupLine($"[red]Error:[/] Unexpected diagnostic error ({Markup.Escape(exception.GetType().Name)}).");
             if (args.Contains("--debug", StringComparer.Ordinal)) Console.Error.WriteLine($"Exception type: {exception.GetType().Name}");
             return 4;
         }
@@ -189,6 +208,8 @@ internal static partial class Program
         TcpProbeResult tcp => SerializeJsonDocument(writer => WriteTcpProbeResult(writer, tcp)),
         TlsProbeResult tls => SerializeJsonDocument(writer => WriteTlsProbeResult(writer, tls)),
         HttpProbeResult http => SerializeJsonDocument(writer => WriteHttpProbeResult(writer, http)),
+        UpdateCheckResult updateCheck => SerializeUpdateJson(updateCheck),
+        UpdateApplyResult updateApply => SerializeUpdateJson(updateApply),
         _ => throw new NotSupportedException($"JSON output is not supported for type '{typeof(T).FullName}'.")
     };
 

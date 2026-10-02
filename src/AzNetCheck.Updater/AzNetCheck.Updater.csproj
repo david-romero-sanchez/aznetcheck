@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Include="NuGet.Versioning" Version="7.9.0" />
+    <EmbeddedResource Include="Keys\update-signing-public.pem" />
+  </ItemGroup>
+</Project>
