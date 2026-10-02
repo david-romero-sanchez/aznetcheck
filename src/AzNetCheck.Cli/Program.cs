@@ -1,6 +1,6 @@
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using System.Net;
+using System.Text;
+using System.Text.Json;
 using AzNetCheck.Azure;
 using AzNetCheck.Core;
 using AzNetCheck.Networking;
@@ -10,7 +10,6 @@ namespace AzNetCheck.Cli;
 
 internal static partial class Program
 {
-    private static readonly JsonSerializerOptions JsonOptions = CreateJsonOptions();
 
     public static async Task<int> Main(string[] args)
     {
@@ -50,7 +49,7 @@ internal static partial class Program
             new DiagnosticTimeouts(timeout, timeout, timeout, timeout), cancellationToken, addressFamily).ConfigureAwait(false);
         if (options.ContainsKey("json"))
         {
-            Console.Out.WriteLine(JsonSerializer.Serialize(report, JsonOptions));
+            Console.Out.WriteLine(SerializeJson(report));
         }
         else
         {
@@ -63,7 +62,7 @@ internal static partial class Program
     private static int DetectCommand(DiagnosticTarget target, IReadOnlyDictionary<string, string?> options, AzureServiceCatalog catalog)
     {
         var result = catalog.Detect(target.Hostname, options.GetValueOrDefault("service"));
-        if (options.ContainsKey("json")) Console.Out.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+        if (options.ContainsKey("json")) Console.Out.WriteLine(SerializeJson(result));
         else RenderDetection(result, options.ContainsKey("no-color"));
         return result.Status == ServiceDetectionStatus.Unknown && options.ContainsKey("service") ? 2 : 0;
     }
@@ -173,10 +172,376 @@ internal static partial class Program
     private static void PrintOrSerialize<T>(T result, IReadOnlyDictionary<string, string?> options)
     {
         if (options.ContainsKey("json"))
-            Console.Out.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+            Console.Out.WriteLine(SerializeJson(result));
         else
             RenderStandalone(result, options.ContainsKey("no-color"));
     }
+
+    private static string SerializeJson<T>(T result) => result switch
+    {
+        DiagnosticReport report => SerializeJsonDocument(writer => WriteDiagnosticReport(writer, report)),
+        IReadOnlyList<AzureServiceDefinition> services => SerializeJsonDocument(writer => WriteAzureServiceDefinitions(writer, services)),
+        AzureServiceDefinition service => SerializeJsonDocument(writer => WriteAzureServiceDefinition(writer, service)),
+        ServiceDetectionResult detection => SerializeJsonDocument(writer => WriteServiceDetectionResult(writer, detection)),
+        DnsResolutionResult dns => SerializeJsonDocument(writer => WriteDnsResolutionResult(writer, dns)),
+        List<TcpProbeResult> tcpResults => SerializeJsonDocument(writer => WriteTcpProbeResults(writer, tcpResults)),
+        IReadOnlyList<TcpProbeResult> tcpResults => SerializeJsonDocument(writer => WriteTcpProbeResults(writer, tcpResults)),
+        TcpProbeResult tcp => SerializeJsonDocument(writer => WriteTcpProbeResult(writer, tcp)),
+        TlsProbeResult tls => SerializeJsonDocument(writer => WriteTlsProbeResult(writer, tls)),
+        HttpProbeResult http => SerializeJsonDocument(writer => WriteHttpProbeResult(writer, http)),
+        _ => throw new NotSupportedException($"JSON output is not supported for type '{typeof(T).FullName}'.")
+    };
+
+    private static string SerializeJsonDocument(Action<Utf8JsonWriter> write)
+    {
+        using var stream = new MemoryStream();
+        using var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true });
+        write(writer);
+        writer.Flush();
+        return Encoding.UTF8.GetString(stream.ToArray());
+    }
+
+    private static void WriteDiagnosticReport(Utf8JsonWriter writer, DiagnosticReport report)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("schemaVersion", report.SchemaVersion);
+        writer.WritePropertyName("target");
+        WriteDiagnosticTarget(writer, report.Target);
+        writer.WritePropertyName("service");
+        WriteServiceDetectionResult(writer, report.Service);
+        writer.WritePropertyName("plan");
+        WriteDiagnosticPlan(writer, report.Plan);
+        writer.WritePropertyName("results");
+        writer.WriteStartArray();
+        foreach (var result in report.Results) WriteDiagnosticResult(writer, result);
+        writer.WriteEndArray();
+        writer.WritePropertyName("findings");
+        writer.WriteStartArray();
+        foreach (var finding in report.Findings) WriteDiagnosticFinding(writer, finding);
+        writer.WriteEndArray();
+        writer.WritePropertyName("summary");
+        WriteDiagnosticSummary(writer, report.Summary);
+        writer.WriteEndObject();
+    }
+
+    private static void WriteDiagnosticTarget(Utf8JsonWriter writer, DiagnosticTarget target)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("originalInput", target.OriginalInput);
+        WriteNullableString(writer, "scheme", target.Scheme);
+        writer.WriteString("hostname", target.Hostname);
+        WriteNullableNumber(writer, "explicitPort", target.ExplicitPort);
+        writer.WriteNumber("effectivePort", target.EffectivePort);
+        writer.WriteString("path", target.Path);
+        WriteNullableString(writer, "ipAddress", target.IpAddress?.ToString());
+        writer.WriteEndObject();
+    }
+
+    private static void WriteServiceDetectionResult(Utf8JsonWriter writer, ServiceDetectionResult result)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("status", ToJsonEnum(result.Status));
+        writer.WritePropertyName("service");
+        if (result.Service is null) writer.WriteNullValue();
+        else WriteAzureServiceDefinition(writer, result.Service);
+        writer.WritePropertyName("candidates");
+        writer.WriteStartArray();
+        foreach (var candidate in result.Candidates) WriteAzureServiceDefinition(writer, candidate);
+        writer.WriteEndArray();
+        writer.WriteString("reason", result.Reason);
+        writer.WriteEndObject();
+    }
+
+    private static void WriteAzureServiceDefinitions(Utf8JsonWriter writer, IReadOnlyList<AzureServiceDefinition> services)
+    {
+        writer.WriteStartArray();
+        foreach (var service in services) WriteAzureServiceDefinition(writer, service);
+        writer.WriteEndArray();
+    }
+
+    private static void WriteAzureServiceDefinition(Utf8JsonWriter writer, AzureServiceDefinition service)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("id", service.Id);
+        writer.WriteString("displayName", service.DisplayName);
+        writer.WritePropertyName("hostnamePatterns");
+        writer.WriteStartArray();
+        foreach (var pattern in service.HostnamePatterns) writer.WriteStringValue(pattern);
+        writer.WriteEndArray();
+        writer.WritePropertyName("privateLinkPatterns");
+        writer.WriteStartArray();
+        foreach (var pattern in service.PrivateLinkPatterns) writer.WriteStringValue(pattern);
+        writer.WriteEndArray();
+        writer.WritePropertyName("transports");
+        writer.WriteStartArray();
+        foreach (var transport in service.Transports) WriteServiceTransport(writer, transport);
+        writer.WriteEndArray();
+        writer.WriteString("defaultProtocol", service.DefaultProtocol);
+        WriteNullableString(writer, "authenticationScope", service.AuthenticationScope);
+        writer.WriteString("httpMethod", service.HttpMethod);
+        writer.WriteEndObject();
+    }
+
+    private static void WriteServiceTransport(Utf8JsonWriter writer, ServiceTransport transport)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("name", transport.Name);
+        writer.WriteString("protocol", transport.Protocol);
+        writer.WriteNumber("port", transport.Port);
+        writer.WriteBoolean("required", transport.Required);
+        writer.WriteString("description", transport.Description);
+        WriteNullableNumber(writer, "portEnd", transport.PortEnd);
+        writer.WriteEndObject();
+    }
+
+    private static void WriteDnsResolutionResult(Utf8JsonWriter writer, DnsResolutionResult result)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("status", ToJsonEnum(result.Status));
+        writer.WritePropertyName("addresses");
+        writer.WriteStartArray();
+        foreach (var address in result.Addresses) writer.WriteStringValue(address);
+        writer.WriteEndArray();
+        writer.WritePropertyName("cnameChain");
+        writer.WriteStartArray();
+        foreach (var item in result.CnameChain) writer.WriteStringValue(item);
+        writer.WriteEndArray();
+        writer.WriteString("duration", result.Duration.ToString("c"));
+        WriteNullableString(writer, "errorCode", result.ErrorCode);
+        WriteNullableString(writer, "errorMessage", result.ErrorMessage);
+        writer.WriteEndObject();
+    }
+
+    private static void WriteDiagnosticPlan(Utf8JsonWriter writer, DiagnosticPlan plan)
+    {
+        writer.WriteStartObject();
+        writer.WritePropertyName("stepIds");
+        writer.WriteStartArray();
+        foreach (var stepId in plan.StepIds) writer.WriteStringValue(stepId);
+        writer.WriteEndArray();
+        writer.WriteEndObject();
+    }
+
+    private static void WriteDiagnosticResult(Utf8JsonWriter writer, DiagnosticResult result)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("testId", result.TestId);
+        writer.WriteString("displayName", result.DisplayName);
+        writer.WriteString("status", ToJsonEnum(result.Status));
+        WriteNullableString(writer, "summary", result.Summary);
+        writer.WriteString("duration", result.Duration.ToString("c"));
+        writer.WritePropertyName("details");
+        writer.WriteStartObject();
+        foreach (var detail in result.Details)
+        {
+            writer.WritePropertyName(detail.Key);
+            WriteDetailValue(writer, detail.Value);
+        }
+        writer.WriteEndObject();
+        writer.WritePropertyName("error");
+        if (result.Error is null) writer.WriteNullValue();
+        else WriteDiagnosticError(writer, result.Error);
+        writer.WriteEndObject();
+    }
+
+    private static void WriteDiagnosticError(Utf8JsonWriter writer, DiagnosticError error)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("code", error.Code);
+        writer.WriteString("message", error.Message);
+        WriteNullableString(writer, "exceptionType", error.ExceptionType);
+        writer.WriteEndObject();
+    }
+
+    private static void WriteDiagnosticFinding(Utf8JsonWriter writer, DiagnosticFinding finding)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("id", finding.Id);
+        writer.WriteString("title", finding.Title);
+        writer.WriteString("severity", ToJsonEnum(finding.Severity));
+        writer.WriteString("description", finding.Description);
+        writer.WritePropertyName("evidence");
+        writer.WriteStartArray();
+        foreach (var evidence in finding.Evidence) writer.WriteStringValue(evidence);
+        writer.WriteEndArray();
+        writer.WritePropertyName("recommendations");
+        writer.WriteStartArray();
+        foreach (var recommendation in finding.Recommendations) WriteDiagnosticRecommendation(writer, recommendation);
+        writer.WriteEndArray();
+        writer.WritePropertyName("documentationLinks");
+        if (finding.DocumentationLinks is null) writer.WriteNullValue();
+        else
+        {
+            writer.WriteStartArray();
+            foreach (var link in finding.DocumentationLinks) writer.WriteStringValue(link);
+            writer.WriteEndArray();
+        }
+        writer.WriteEndObject();
+    }
+
+    private static void WriteDiagnosticRecommendation(Utf8JsonWriter writer, DiagnosticRecommendation recommendation)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("id", recommendation.Id);
+        writer.WriteString("text", recommendation.Text);
+        writer.WriteEndObject();
+    }
+
+    private static void WriteDiagnosticSummary(Utf8JsonWriter writer, DiagnosticSummary summary)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("overallStatus", ToJsonEnum(summary.OverallStatus));
+        writer.WriteString("networkConnectivity", ToJsonEnum(summary.NetworkConnectivity));
+        writer.WriteString("authentication", ToJsonEnum(summary.Authentication));
+        writer.WriteString("message", summary.Message);
+        writer.WriteEndObject();
+    }
+
+    private static void WriteDetailValue(Utf8JsonWriter writer, object? value)
+    {
+        switch (value)
+        {
+            case null:
+                writer.WriteNullValue();
+                break;
+            case string text:
+                writer.WriteStringValue(text);
+                break;
+            case bool flag:
+                writer.WriteBooleanValue(flag);
+                break;
+            case int number:
+                writer.WriteNumberValue(number);
+                break;
+            case long number:
+                writer.WriteNumberValue(number);
+                break;
+            case DateTimeOffset timestamp:
+                writer.WriteStringValue(timestamp);
+                break;
+            case IEnumerable<string> values:
+                writer.WriteStartArray();
+                foreach (var item in values) writer.WriteStringValue(item);
+                writer.WriteEndArray();
+                break;
+            case IEnumerable<ResolvedAddressInfo> values:
+                writer.WriteStartArray();
+                foreach (var item in values) WriteResolvedAddressInfo(writer, item);
+                writer.WriteEndArray();
+                break;
+            case IEnumerable<TcpProbeResult> values:
+                writer.WriteStartArray();
+                foreach (var item in values) WriteTcpProbeResult(writer, item);
+                writer.WriteEndArray();
+                break;
+            default:
+                throw new NotSupportedException($"Unsupported diagnostic detail value type '{value.GetType().FullName}'.");
+        }
+    }
+
+    private static void WriteResolvedAddressInfo(Utf8JsonWriter writer, ResolvedAddressInfo value)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("address", value.Address);
+        writer.WriteString("kind", value.Kind);
+        writer.WriteEndObject();
+    }
+
+    private static void WriteTcpProbeResults(Utf8JsonWriter writer, IReadOnlyList<TcpProbeResult> results)
+    {
+        writer.WriteStartArray();
+        foreach (var result in results) WriteTcpProbeResult(writer, result);
+        writer.WriteEndArray();
+    }
+
+    private static void WriteTcpProbeResult(Utf8JsonWriter writer, TcpProbeResult result)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("status", ToJsonEnum(result.Status));
+        writer.WriteString("address", result.Address);
+        writer.WriteNumber("port", result.Port);
+        writer.WriteString("duration", result.Duration.ToString("c"));
+        WriteNullableString(writer, "socketError", result.SocketError);
+        WriteNullableString(writer, "errorMessage", result.ErrorMessage);
+        writer.WriteEndObject();
+    }
+
+    private static void WriteTlsProbeResult(Utf8JsonWriter writer, TlsProbeResult result)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("status", ToJsonEnum(result.Status));
+        writer.WriteString("hostname", result.Hostname);
+        writer.WriteNumber("port", result.Port);
+        writer.WriteString("duration", result.Duration.ToString("c"));
+        WriteNullableString(writer, "protocol", result.Protocol);
+        WriteNullableString(writer, "cipher", result.Cipher);
+        WriteNullableString(writer, "subject", result.Subject);
+        WriteNullableString(writer, "issuer", result.Issuer);
+        WriteNullableDateTimeOffset(writer, "notAfter", result.NotAfter);
+        WriteNullableBoolean(writer, "hostnameMatches", result.HostnameMatches);
+        WriteNullableBoolean(writer, "chainValid", result.ChainValid);
+        WriteNullableString(writer, "errorMessage", result.ErrorMessage);
+        WriteNullableDateTimeOffset(writer, "notBefore", result.NotBefore);
+        WriteNullableString(writer, "subjectAlternativeNames", result.SubjectAlternativeNames);
+        writer.WriteEndObject();
+    }
+
+    private static void WriteHttpProbeResult(Utf8JsonWriter writer, HttpProbeResult result)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("status", ToJsonEnum(result.Status));
+        writer.WriteString("uri", result.Uri);
+        WriteNullableNumber(writer, "statusCode", result.StatusCode);
+        WriteNullableString(writer, "reasonPhrase", result.ReasonPhrase);
+        writer.WriteString("duration", result.Duration.ToString("c"));
+        WriteNullableString(writer, "redirectLocation", result.RedirectLocation);
+        WriteNullableString(writer, "errorMessage", result.ErrorMessage);
+        writer.WriteEndObject();
+    }
+
+    private static string FormatDetailValue(object? value) => value switch
+    {
+        null => "null",
+        string text => text,
+        bool flag => flag ? "true" : "false",
+        int number => number.ToString(),
+        long number => number.ToString(),
+        DateTimeOffset timestamp => timestamp.ToString("O"),
+        IEnumerable<string> values => string.Join(", ", values),
+        IEnumerable<ResolvedAddressInfo> values => string.Join(", ", values.Select(item => $"{item.Address} ({item.Kind})")),
+        IEnumerable<TcpProbeResult> values => string.Join("; ", values.Select(item => $"{item.Address}:{item.Port}={ToJsonEnum(item.Status)}")),
+        _ => value.ToString() ?? string.Empty
+    };
+
+    private static void WriteNullableString(Utf8JsonWriter writer, string propertyName, string? value)
+    {
+        writer.WritePropertyName(propertyName);
+        if (value is null) writer.WriteNullValue();
+        else writer.WriteStringValue(value);
+    }
+
+    private static void WriteNullableNumber(Utf8JsonWriter writer, string propertyName, int? value)
+    {
+        writer.WritePropertyName(propertyName);
+        if (value is int number) writer.WriteNumberValue(number);
+        else writer.WriteNullValue();
+    }
+
+    private static void WriteNullableBoolean(Utf8JsonWriter writer, string propertyName, bool? value)
+    {
+        writer.WritePropertyName(propertyName);
+        if (value is bool flag) writer.WriteBooleanValue(flag);
+        else writer.WriteNullValue();
+    }
+
+    private static void WriteNullableDateTimeOffset(Utf8JsonWriter writer, string propertyName, DateTimeOffset? value)
+    {
+        writer.WritePropertyName(propertyName);
+        if (value is DateTimeOffset timestamp) writer.WriteStringValue(timestamp);
+        else writer.WriteNullValue();
+    }
+
+    private static string ToJsonEnum<TEnum>(TEnum value) where TEnum : struct, Enum => JsonNamingPolicy.CamelCase.ConvertName(value.ToString());
 
     private static IReadOnlyList<string> FilterAddresses(IEnumerable<string> addresses, DiagnosticAddressFamily family) =>
         addresses.Where(value => System.Net.IPAddress.TryParse(value, out var address) && family switch
@@ -185,23 +550,6 @@ internal static partial class Program
             DiagnosticAddressFamily.IPv6 => address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6,
             _ => true
         }).ToArray();
-
-    private static JsonSerializerOptions CreateJsonOptions()
-    {
-        var options = new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
-        options.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase));
-        options.Converters.Add(new IpAddressJsonConverter());
-        return options;
-    }
-
-    private sealed class IpAddressJsonConverter : JsonConverter<IPAddress>
-    {
-        public override IPAddress? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
-            IPAddress.TryParse(reader.GetString(), out var address) ? address : null;
-
-        public override void Write(Utf8JsonWriter writer, IPAddress value, JsonSerializerOptions options) =>
-            writer.WriteStringValue(value.ToString());
-    }
 
     private static int UsageError(string message, bool noColor = false)
     {

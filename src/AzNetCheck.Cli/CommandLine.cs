@@ -1,7 +1,6 @@
 using System.CommandLine;
 using System.Globalization;
 using System.Net;
-using System.Text.Json;
 using AzNetCheck.Azure;
 using AzNetCheck.Core;
 using Spectre.Console;
@@ -282,7 +281,7 @@ internal static partial class Program
     {
         if (json)
         {
-            Console.Out.WriteLine(JsonSerializer.Serialize(catalog.Services, JsonOptions));
+            Console.Out.WriteLine(SerializeJson(catalog.Services));
             return 0;
         }
         var table = new Table().Border(TableBorder.Rounded);
@@ -300,7 +299,7 @@ internal static partial class Program
         var service = catalog.Services.FirstOrDefault(candidate =>
             NormalizeServiceName(candidate.Id) == normalized || NormalizeServiceName(candidate.DisplayName) == normalized);
         if (service is null) return UsageError($"No catalog service matches '{name}'.", noColor);
-        if (json) Console.Out.WriteLine(JsonSerializer.Serialize(service, JsonOptions));
+        if (json) Console.Out.WriteLine(SerializeJson(service));
         else
         {
             var console = CreateConsole(noColor);
@@ -348,7 +347,7 @@ internal static partial class Program
                 table.AddRow("", Markup.Escape(result.Summary), "");
             if (verbose)
                 foreach (var detail in result.Details)
-                    table.AddRow("", Markup.Escape($"{detail.Key}: {JsonSerializer.Serialize(detail.Value, JsonOptions)}"), "");
+                    table.AddRow("", Markup.Escape($"{detail.Key}: {FormatDetailValue(detail.Value)}"), "");
         }
         console.Write(table);
 

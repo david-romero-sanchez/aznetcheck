@@ -142,6 +142,7 @@ public static class DiagnosticTargetParser
 }
 
 public sealed record ServiceTransport(string Name, string Protocol, int Port, bool Required, string Description, int? PortEnd = null);
+public sealed record ResolvedAddressInfo(string Address, string Kind);
 public sealed record AzureServiceDefinition(
     string Id,
     string DisplayName,

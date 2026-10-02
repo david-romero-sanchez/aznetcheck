@@ -53,8 +53,7 @@ public sealed class AzureServiceCatalog : IAzureServiceDetector
     {
         using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("AzNetCheck.Azure.service-catalog.json")
             ?? throw new InvalidOperationException("Embedded Azure service catalog was not found.");
-        return JsonSerializer.Deserialize<List<AzureServiceDefinition>>(stream,
-            new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+        return JsonSerializer.Deserialize(stream, AzureServiceCatalogJsonSerializerContext.Default.ListAzureServiceDefinition)
             ?? throw new InvalidDataException("Embedded Azure service catalog is empty.");
     }
 }

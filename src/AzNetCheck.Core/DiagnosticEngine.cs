@@ -40,7 +40,7 @@ public sealed class DiagnosticEngine(
         results.Add(ToResult("ip-analysis", "IP analysis", ipStatus,
             addresses.Length == 0 ? $"No resolved address matches the {addressFamily} selection" :
                 privateAddresses.Length > 0 ? "Private IP address detected" : $"{addresses.Length} address(es) selected",
-            TimeSpan.Zero, ("resolvedAddresses", resolvedAddresses.Select(address => new { Address = address.ToString(), Kind = IpAddressClassifier.Classify(address).ToString() }).ToArray()),
+            TimeSpan.Zero, ("resolvedAddresses", resolvedAddresses.Select(address => new ResolvedAddressInfo(address.ToString(), IpAddressClassifier.Classify(address).ToString())).ToArray()),
             ("selectedAddresses", addresses.Select(address => address.ToString()).ToArray()), ("privateLinkIndicators", privateLink)));
         if (privateLink || privateAddresses.Length > 0)
             findings.Add(new("private-link-indicators", "Private Link indicators detected", FindingSeverity.Info,
