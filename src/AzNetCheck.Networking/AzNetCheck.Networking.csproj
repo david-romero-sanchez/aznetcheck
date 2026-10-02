@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\AzNetCheck.Core\AzNetCheck.Core.csproj" />
+    <PackageReference Include="DnsClient" Version="1.7.0" />
+  </ItemGroup>
+</Project>

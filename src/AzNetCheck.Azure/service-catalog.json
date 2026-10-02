@@ -1,0 +1,123 @@
+[
+  {
+    "id": "azure-key-vault",
+    "displayName": "Azure Key Vault",
+    "hostnamePatterns": ["*.vault.azure.net", "*.vault.azure.cn", "*.vault.usgovcloudapi.net"],
+    "privateLinkPatterns": ["*.privatelink.vaultcore.azure.net", "*.privatelink.vaultcore.azure.cn", "*.privatelink.vaultcore.usgovcloudapi.net"],
+    "defaultProtocol": "https",
+    "authenticationScope": "https://vault.azure.net/.default",
+    "httpMethod": "GET",
+    "transports": [{ "name": "HTTPS", "protocol": "https", "port": 443, "required": true, "description": "HTTPS endpoint connectivity" }]
+  },
+  {
+    "id": "azure-blob-storage",
+    "displayName": "Azure Blob Storage",
+    "hostnamePatterns": ["*.blob.core.windows.net", "*.blob.core.usgovcloudapi.net"],
+    "privateLinkPatterns": ["*.privatelink.blob.core.windows.net", "*.privatelink.blob.core.usgovcloudapi.net"],
+    "defaultProtocol": "https",
+    "authenticationScope": "https://storage.azure.com/.default",
+    "httpMethod": "GET",
+    "transports": [{ "name": "HTTPS", "protocol": "https", "port": 443, "required": true, "description": "Blob REST endpoint" }]
+  },
+  {
+    "id": "azure-file-storage",
+    "displayName": "Azure File Storage",
+    "hostnamePatterns": ["*.file.core.windows.net", "*.file.core.usgovcloudapi.net"],
+    "privateLinkPatterns": ["*.privatelink.file.core.windows.net", "*.privatelink.file.core.usgovcloudapi.net"],
+    "defaultProtocol": "https",
+    "authenticationScope": "https://storage.azure.com/.default",
+    "httpMethod": "GET",
+    "transports": [
+      { "name": "HTTPS", "protocol": "https", "port": 443, "required": true, "description": "Azure Files REST endpoint" },
+      { "name": "SMB", "protocol": "tcp", "port": 445, "required": false, "description": "Azure Files SMB transport" }
+    ]
+  },
+  {
+    "id": "azure-queue-storage",
+    "displayName": "Azure Queue Storage",
+    "hostnamePatterns": ["*.queue.core.windows.net", "*.queue.core.usgovcloudapi.net"],
+    "privateLinkPatterns": ["*.privatelink.queue.core.windows.net", "*.privatelink.queue.core.usgovcloudapi.net"],
+    "defaultProtocol": "https",
+    "authenticationScope": "https://storage.azure.com/.default",
+    "httpMethod": "GET",
+    "transports": [{ "name": "HTTPS", "protocol": "https", "port": 443, "required": true, "description": "Queue REST endpoint" }]
+  },
+  {
+    "id": "azure-table-storage",
+    "displayName": "Azure Table Storage",
+    "hostnamePatterns": ["*.table.core.windows.net", "*.table.core.usgovcloudapi.net"],
+    "privateLinkPatterns": ["*.privatelink.table.core.windows.net", "*.privatelink.table.core.usgovcloudapi.net"],
+    "defaultProtocol": "https",
+    "authenticationScope": "https://storage.azure.com/.default",
+    "httpMethod": "GET",
+    "transports": [{ "name": "HTTPS", "protocol": "https", "port": 443, "required": true, "description": "Table REST endpoint" }]
+  },
+  {
+    "id": "azure-data-lake-storage",
+    "displayName": "Azure Data Lake Storage",
+    "hostnamePatterns": ["*.dfs.core.windows.net", "*.dfs.core.usgovcloudapi.net"],
+    "privateLinkPatterns": ["*.privatelink.dfs.core.windows.net", "*.privatelink.dfs.core.usgovcloudapi.net"],
+    "defaultProtocol": "https",
+    "authenticationScope": "https://storage.azure.com/.default",
+    "httpMethod": "GET",
+    "transports": [{ "name": "HTTPS", "protocol": "https", "port": 443, "required": true, "description": "DFS REST endpoint" }]
+  },
+  {
+    "id": "azure-sql-database",
+    "displayName": "Azure SQL Database",
+    "hostnamePatterns": ["*.database.windows.net", "*.database.usgovcloudapi.net"],
+    "privateLinkPatterns": ["*.privatelink.database.windows.net", "*.privatelink.database.usgovcloudapi.net"],
+    "defaultProtocol": "tcp",
+    "authenticationScope": "https://database.windows.net/.default",
+    "httpMethod": "",
+    "transports": [{ "name": "TDS", "protocol": "tcp", "port": 1433, "required": true, "description": "Azure SQL connectivity" }]
+  },
+  {
+    "id": "azure-service-bus",
+    "displayName": "Azure Service Bus",
+    "hostnamePatterns": ["*.servicebus.windows.net"],
+    "privateLinkPatterns": ["*.privatelink.servicebus.windows.net"],
+    "defaultProtocol": "https",
+    "authenticationScope": "https://servicebus.azure.net/.default",
+    "httpMethod": "GET",
+    "transports": [
+      { "name": "HTTPS", "protocol": "https", "port": 443, "required": true, "description": "HTTPS management or REST endpoint" },
+      { "name": "AMQP over TLS", "protocol": "tcp", "port": 5671, "required": false, "description": "AMQP over TLS" },
+      { "name": "AMQP WebSockets", "protocol": "tcp", "port": 443, "required": false, "description": "AMQP over WebSockets" }
+    ]
+  },
+  {
+    "id": "azure-event-hubs",
+    "displayName": "Azure Event Hubs",
+    "hostnamePatterns": ["*.servicebus.windows.net"],
+    "privateLinkPatterns": ["*.privatelink.servicebus.windows.net"],
+    "defaultProtocol": "https",
+    "authenticationScope": "https://eventhubs.azure.net/.default",
+    "httpMethod": "GET",
+    "transports": [
+      { "name": "HTTPS", "protocol": "https", "port": 443, "required": true, "description": "HTTPS endpoint connectivity" },
+      { "name": "AMQP over TLS", "protocol": "tcp", "port": 5671, "required": false, "description": "AMQP over TLS" },
+      { "name": "AMQP WebSockets", "protocol": "tcp", "port": 443, "required": false, "description": "AMQP over WebSockets" }
+    ]
+  },
+  {
+    "id": "azure-container-registry",
+    "displayName": "Azure Container Registry",
+    "hostnamePatterns": ["*.azurecr.io"],
+    "privateLinkPatterns": ["*.privatelink.azurecr.io"],
+    "defaultProtocol": "https",
+    "authenticationScope": "https://management.azure.com/.default",
+    "httpMethod": "GET",
+    "transports": [{ "name": "HTTPS", "protocol": "https", "port": 443, "required": true, "description": "Registry endpoint connectivity" }]
+  },
+  {
+    "id": "azure-app-service",
+    "displayName": "Azure App Service",
+    "hostnamePatterns": ["*.azurewebsites.net", "*.scm.azurewebsites.net"],
+    "privateLinkPatterns": ["*.privatelink.azurewebsites.net"],
+    "defaultProtocol": "https",
+    "authenticationScope": null,
+    "httpMethod": "GET",
+    "transports": [{ "name": "HTTPS", "protocol": "https", "port": 443, "required": true, "description": "App Service endpoint" }]
+  }
+]

@@ -1,0 +1,9 @@
+# Architecture
+
+AzNetCheck uses four production projects. `AzNetCheck.Cli` owns argument parsing, composition, human/JSON output and exit codes. `AzNetCheck.Core` contains the target/domain records, replaceable diagnostic contracts, orchestration and report model. `AzNetCheck.Networking` implements DNS, TCP, TLS and HTTP using .NET APIs and DnsClient. `AzNetCheck.Azure` embeds the declarative Azure service catalog and performs hostname/profile detection. Networking and Azure depend only on Core; Core has no infrastructure dependency.
+
+The local pipeline is target normalization, service detection, DNS/CNAME resolution, address classification and Private Link indicators, TCP attempts, TLS/certificate validation when applicable, HTTP probing, and finding/summary creation. A failed prerequisite produces explicit `Skipped` results for dependent stages. Individual results and findings are preserved instead of collapsing all states into one status.
+
+DNS, TCP, TLS and HTTP are interfaces at the Core boundary, so the engine tests use deterministic fake implementations without network access. The HTTP probe uses one reusable `HttpClient` per CLI run and the platform proxy configuration. TCP and TLS are direct socket tests; a direct failure alongside proxied HTTP success is therefore possible.
+
+The Azure catalog stays outside the networking implementation. `IAzureServiceDetector` can be replaced or extended without changing socket behavior. Azure Resource Manager inspection and credential-based authentication are deliberately outside the local connectivity pipeline.

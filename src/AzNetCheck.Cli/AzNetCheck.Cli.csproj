@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>aznetcheck</AssemblyName>
+    <RootNamespace>AzNetCheck.Cli</RootNamespace>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\AzNetCheck.Core\AzNetCheck.Core.csproj" />
+    <ProjectReference Include="..\AzNetCheck.Networking\AzNetCheck.Networking.csproj" />
+    <ProjectReference Include="..\AzNetCheck.Azure\AzNetCheck.Azure.csproj" />
+  </ItemGroup>
+</Project>
