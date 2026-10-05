@@ -43,9 +43,12 @@ internal static partial class Program
         var parseResult = root.Parse(args);
         if (parseResult.Errors.Count > 0)
         {
-            var errorConsole = CreateConsole(args.Contains("--no-color", StringComparer.Ordinal), Console.Error);
+            var noColor = args.Contains("--no-color", StringComparer.Ordinal);
             foreach (var error in parseResult.Errors)
-                errorConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(error.Message)}");
+            {
+                if (noColor) Console.Error.WriteLine($"Error: {error.Message}");
+                else CreateConsole(noColor, Console.Error).MarkupLine($"[red]Error:[/] {Markup.Escape(error.Message)}");
+            }
             return 2;
         }
 
@@ -410,6 +413,19 @@ internal static partial class Program
         if (json) Console.Out.WriteLine(SerializeJson(service));
         else
         {
+            if (noColor)
+            {
+                Console.Out.WriteLine($" {service.DisplayName}");
+                Console.Out.WriteLine("Transport | Protocol | Port | Required");
+                foreach (var transport in service.Transports)
+                    Console.Out.WriteLine($"{transport.Name} | {transport.Protocol} | " +
+                        $"{(transport.PortEnd is int end ? $"{transport.Port}-{end}" : transport.Port.ToString(CultureInfo.InvariantCulture))} | " +
+                        (transport.Required ? "yes" : "optional"));
+                if (service.AuthenticationScope is not null)
+                    Console.Out.WriteLine($"Authentication scope: {service.AuthenticationScope}");
+                return 0;
+            }
+
             var console = CreateConsole(noColor);
             console.MarkupLine($"[bold] {Markup.Escape(service.DisplayName)}[/]");
             var table = new Table().Border(TableBorder.Rounded);
