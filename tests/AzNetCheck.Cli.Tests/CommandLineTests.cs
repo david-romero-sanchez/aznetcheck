@@ -31,6 +31,13 @@ public sealed class CommandLineTests
         Assert.Contains("--json", result.StandardOutput);
         Assert.Contains("--ipv4 / --ipv6", result.StandardOutput);
         Assert.Contains("aznetcheck check contoso.vault.azure.net", result.StandardOutput);
+        var lines = result.StandardOutput.Split(Environment.NewLine);
+        foreach (var title in new[] { "What it checks", "Commands", "Options" })
+        {
+            var titleIndex = Array.FindIndex(lines, line => line.Trim() == title);
+            Assert.True(titleIndex > 0, $"Missing table title: {title}");
+            Assert.True(string.IsNullOrWhiteSpace(lines[titleIndex - 1]), $"Missing blank line before {title}");
+        }
     }
 
     [Fact]

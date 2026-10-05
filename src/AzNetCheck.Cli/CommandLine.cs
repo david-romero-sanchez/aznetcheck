@@ -76,6 +76,7 @@ internal static partial class Program
         capabilities.AddRow("TLS and certificates", "Validates the handshake, hostname, and chain; reports protocol and certificate details.");
         capabilities.AddRow("HTTP", "Sends a non-destructive GET and interprets 401, 403, and other statuses separately from network connectivity.");
         capabilities.AddRow("Results", "Provides findings, recommendations, versioned JSON, and exit codes.");
+        console.WriteLine();
         console.Write(capabilities);
 
         var commands = new Table().Border(TableBorder.Rounded).Title("Commands");
@@ -92,6 +93,7 @@ internal static partial class Program
         commands.AddRow("update check (optional --force)", "Checks GitHub Releases for a newer signed stable version.");
         commands.AddRow("update apply (optional --force)", "Downloads, verifies, installs, and rolls back if first start fails.");
         commands.AddRow("version", "Displays the application version.");
+        console.WriteLine();
         console.Write(commands);
 
         var options = new Table().Border(TableBorder.Rounded).Title("Options");
@@ -108,6 +110,7 @@ internal static partial class Program
         options.AddRow("--verbose", "check", "Includes detailed diagnostic evidence.");
         options.AddRow("--force", "update check/apply", "Bypasses the check interval; apply can retry a failed version.");
         options.AddRow("--help", "All commands", "Displays concise help and command options.");
+        console.WriteLine();
         console.Write(options);
 
         console.MarkupLine("\n[bold]Examples[/]");
