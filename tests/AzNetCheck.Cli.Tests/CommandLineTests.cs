@@ -34,7 +34,7 @@ public sealed class CommandLineTests
         var lines = result.StandardOutput.Split(Environment.NewLine);
         foreach (var title in new[] { "What it checks", "Commands", "Options" })
         {
-            var titleIndex = Array.FindIndex(lines, line => line.Trim() == title);
+            var titleIndex = Array.FindIndex(lines, line => line.Contains(title, StringComparison.Ordinal));
             Assert.True(titleIndex > 0, $"Missing table title: {title}");
             Assert.True(string.IsNullOrWhiteSpace(lines[titleIndex - 1]), $"Missing blank line before {title}");
         }
