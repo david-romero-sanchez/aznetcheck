@@ -584,6 +584,7 @@ internal static partial class Program
     private static IAnsiConsole CreateConsole(bool noColor, TextWriter? output = null) => AnsiConsole.Create(new AnsiConsoleSettings
     {
         Ansi = noColor ? AnsiSupport.No : AnsiSupport.Detect,
+        ColorSystem = noColor ? ColorSystemSupport.Standard : ColorSystemSupport.Detect,
         Out = new AnsiConsoleOutput(output ?? Console.Out)
     });
 
