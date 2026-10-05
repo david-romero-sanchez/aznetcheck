@@ -67,6 +67,7 @@ jobs:
           --output artifacts/publish/win-x64
           -p:PublishSingleFile=true
           -p:PublishTrimmed=true
+          -p:PublishReadyToRun=true
           -p:Version=${{ steps.version.outputs.version }}
           -p:AssemblyVersion=${{ steps.version.outputs.assemblyVersion }}
           -p:FileVersion=${{ steps.version.outputs.assemblyVersion }}
