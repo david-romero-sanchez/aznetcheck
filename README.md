@@ -219,7 +219,8 @@ dotnet publish src/AzNetCheck.Cli/AzNetCheck.Cli.csproj `
   --runtime win-x64 `
   --self-contained true `
   -p:PublishSingleFile=true `
-  -p:PublishTrimmed=false
+  -p:PublishTrimmed=true `
+  -p:PublishReadyToRun=true
 ```
 
 The output includes `aznetcheck.exe` under `src/AzNetCheck.Cli/bin/Release/net10.0/win-x64/publish/`. A publish profile is also available:
@@ -227,5 +228,3 @@ The output includes `aznetcheck.exe` under `src/AzNetCheck.Cli/bin/Release/net10
 ```powershell
 dotnet publish src/AzNetCheck.Cli/AzNetCheck.Cli.csproj -p:PublishProfile=win-x64
 ```
-
-Trimming is intentionally disabled (`PublishTrimmed=false`) in both publish profiles. The application uses JSON serialization and console libraries, and the current release prioritizes reliable single-file publishing over a smaller executable. Do not enable trimming for production artifacts until the trimmed publish and all CLI/catalog/JSON/update flows have dedicated validation. Only `win-x64` is currently configured for self-update and release publishing.
