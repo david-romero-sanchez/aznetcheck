@@ -47,8 +47,7 @@ public static class UpdateManifestBuilder
             }
         };
 
-        var bytes = JsonSerializer.SerializeToUtf8Bytes(manifest,
-            new JsonSerializerOptions { WriteIndented = true });
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(manifest, UpdateJsonSerializerContext.Default.UpdateManifest);
         using var rsa = RSA.Create();
         rsa.ImportFromPem(privateKeyPem);
         var signature = rsa.SignData(bytes, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);

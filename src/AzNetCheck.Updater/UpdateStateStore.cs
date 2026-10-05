@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -45,7 +46,6 @@ public sealed class UpdatePaths(string? rootOverride = null, string? downloadRoo
 
 public sealed class UpdateStateStore(UpdatePaths paths, IUpdateLogger? logger = null)
 {
-    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
     private readonly IUpdateLogger _logger = logger ?? NullUpdateLogger.Instance;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
@@ -61,7 +61,7 @@ public sealed class UpdateStateStore(UpdatePaths paths, IUpdateLogger? logger = 
             {
                 await using var stream = new FileStream(paths.StatePath, FileMode.Open, FileAccess.Read, FileShare.Read,
                     16 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
-                return await JsonSerializer.DeserializeAsync<UpdateState>(stream, JsonOptions, cancellationToken).ConfigureAwait(false)
+                return await JsonSerializer.DeserializeAsync(stream, UpdateJsonSerializerContext.Default.UpdateState, cancellationToken).ConfigureAwait(false)
                     ?? new UpdateState();
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
@@ -78,7 +78,7 @@ public sealed class UpdateStateStore(UpdatePaths paths, IUpdateLogger? logger = 
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await WriteAtomicAsync(paths.StatePath, state, cancellationToken).ConfigureAwait(false);
+            await WriteAtomicAsync(paths.StatePath, state, UpdateJsonSerializerContext.Default.UpdateState, cancellationToken).ConfigureAwait(false);
         }
         finally { _gate.Release(); }
     }
@@ -90,7 +90,7 @@ public sealed class UpdateStateStore(UpdatePaths paths, IUpdateLogger? logger = 
         {
             await using var stream = new FileStream(paths.TransactionPath, FileMode.Open, FileAccess.Read, FileShare.Read,
                 16 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
-            return await JsonSerializer.DeserializeAsync<UpdateTransaction>(stream, JsonOptions, cancellationToken).ConfigureAwait(false);
+            return await JsonSerializer.DeserializeAsync(stream, UpdateJsonSerializerContext.Default.UpdateTransaction, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
         {
@@ -100,7 +100,7 @@ public sealed class UpdateStateStore(UpdatePaths paths, IUpdateLogger? logger = 
     }
 
     public async Task SaveTransactionAsync(UpdateTransaction transaction, CancellationToken cancellationToken = default) =>
-        await WriteAtomicAsync(paths.TransactionPath, transaction, cancellationToken).ConfigureAwait(false);
+        await WriteAtomicAsync(paths.TransactionPath, transaction, UpdateJsonSerializerContext.Default.UpdateTransaction, cancellationToken).ConfigureAwait(false);
 
     public Task DeleteTransactionAsync() 
     {
@@ -110,7 +110,7 @@ public sealed class UpdateStateStore(UpdatePaths paths, IUpdateLogger? logger = 
         return Task.CompletedTask;
     }
 
-    private static async Task WriteAtomicAsync<T>(string path, T value, CancellationToken cancellationToken)
+    private static async Task WriteAtomicAsync<T>(string path, T value, JsonTypeInfo<T> typeInfo, CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
@@ -119,7 +119,7 @@ public sealed class UpdateStateStore(UpdatePaths paths, IUpdateLogger? logger = 
             await using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None,
                 16 * 1024, FileOptions.Asynchronous | FileOptions.WriteThrough))
             {
-                await JsonSerializer.SerializeAsync(stream, value, JsonOptions, cancellationToken).ConfigureAwait(false);
+                await JsonSerializer.SerializeAsync(stream, value, typeInfo, cancellationToken).ConfigureAwait(false);
                 await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
             }
             File.Move(temporary, path, overwrite: true);

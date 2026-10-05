@@ -54,7 +54,7 @@ public sealed class UpdateManifestVerifier
 
         try
         {
-            manifest = JsonSerializer.Deserialize<UpdateManifest>(manifestBytes, JsonOptions);
+            manifest = JsonSerializer.Deserialize(manifestBytes, StrictJsonContext.UpdateManifest);
             if (manifest is null)
             {
                 error = "Manifest JSON was empty.";
@@ -135,9 +135,9 @@ public sealed class UpdateManifestVerifier
         return true;
     }
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    private static readonly UpdateJsonSerializerContext StrictJsonContext = new(new JsonSerializerOptions
     {
         PropertyNameCaseInsensitive = false,
         UnmappedMemberHandling = System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow
-    };
+    });
 }

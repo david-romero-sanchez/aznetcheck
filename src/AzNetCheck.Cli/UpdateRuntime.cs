@@ -109,12 +109,21 @@ internal static partial class Program
         return new InternalUpdateCommandResult(true, await parseResult.InvokeAsync(invocation).ConfigureAwait(false));
     }
 
-    private static string SerializeUpdateJson<T>(T value)
+    private static readonly UpdateJsonSerializerContext UpdateJsonContext = CreateUpdateJsonContext();
+
+    private static UpdateJsonSerializerContext CreateUpdateJsonContext()
     {
         var options = new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
-        options.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase));
-        return JsonSerializer.Serialize(value, options);
+        options.Converters.Add(new JsonStringEnumConverter<UpdateCheckStatus>(JsonNamingPolicy.CamelCase));
+        options.Converters.Add(new JsonStringEnumConverter<UpdateApplyStatus>(JsonNamingPolicy.CamelCase));
+        return new UpdateJsonSerializerContext(options);
     }
+
+    private static string SerializeUpdateJson(UpdateCheckResult value) =>
+        JsonSerializer.Serialize(value, UpdateJsonContext.UpdateCheckResult);
+
+    private static string SerializeUpdateJson(UpdateApplyResult value) =>
+        JsonSerializer.Serialize(value, UpdateJsonContext.UpdateApplyResult);
 
     private sealed class ConsoleUpdateLogger : IUpdateLogger
     {
